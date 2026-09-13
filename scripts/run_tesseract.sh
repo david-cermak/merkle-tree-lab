@@ -10,6 +10,8 @@
 #   HTTP_ADDR     submission endpoint           (default 127.0.0.1:6962)
 #   ROOTS_PEM     accepted roots PEM            (default out/pki/mldsa65/root.crt)
 #   LOG_KEY       ECDSA checkpoint signing key  (default out/log-key.pem)
+#   ADDITIONAL_SIGNER  optional Ed25519 note signer for the log (witnessing)
+#   WITNESS_POLICY     optional witness policy file (enables witnessing)
 #   GOTOOLCHAIN   Go toolchain                  (default go1.27.0)
 set -euo pipefail
 
@@ -57,6 +59,14 @@ start() {
   ensure_roots
   mkdir -p "$STORAGE_DIR"
 
+  extra_args=()
+  if [[ -n "${ADDITIONAL_SIGNER:-}" ]]; then
+    extra_args+=(--additional_signer="$ADDITIONAL_SIGNER")
+  fi
+  if [[ -n "${WITNESS_POLICY:-}" ]]; then
+    extra_args+=(--witness_policy_file="$WITNESS_POLICY")
+  fi
+
   export GOMEMLIMIT="${GOMEMLIMIT:-2GiB}"
   nohup "$BIN" \
     --http_endpoint="$HTTP_ADDR" \
@@ -67,6 +77,7 @@ start() {
     --checkpoint_interval="${CHECKPOINT_INTERVAL:-1s}" \
     --enable_publication_awaiter=false \
     --slog_level="${SLOG_LEVEL:-1}" \
+    "${extra_args[@]}" \
     >"$LOG_FILE" 2>&1 &
   echo $! >"$PID_FILE"
 

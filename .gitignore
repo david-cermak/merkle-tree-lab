@@ -17,8 +17,8 @@ out/
 *.csr
 
 # Built binaries
+bin/
 tesseract-posix
-/tmp/
 
 # Editor / OS
 .DS_Store
