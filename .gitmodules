@@ -1,0 +1,3 @@
+[submodule "impl/tesseract"]
+	path = impl/tesseract
+	url = https://github.com/transparency-dev/tesseract.git
