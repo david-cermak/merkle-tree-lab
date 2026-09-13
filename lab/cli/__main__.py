@@ -6,6 +6,7 @@ import argparse
 import base64
 import json
 import sys
+import time
 from pathlib import Path
 
 from .. import certs, measure, merkle, note, pki, staticct
@@ -144,6 +145,64 @@ def cmd_measure(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_demo(args: argparse.Namespace) -> int:
+    pki_dir = Path(args.pki_dir)
+    leaf = pki_dir / args.algorithm / "leaf.crt"
+    intermediate = pki_dir / args.algorithm / "int.crt"
+    if not leaf.exists():
+        pki.ensure_openssl(args.openssl)
+        pki.generate(args.algorithm, pki_dir, openssl=args.openssl)
+    chain = certs.read_certificates(str(leaf)) + certs.read_certificates(str(intermediate))
+    leaf_der = chain[0]
+
+    client = staticct.StaticCTClient(args.log, args.storage_dir)
+    response = client.add_chain(chain)
+    extensions = base64.b64decode(response.get("extensions", ""))
+    try:
+        leaf_index = staticct.parse_ct_extensions(extensions)
+    except ValueError:
+        leaf_index = None
+    print(f"Submitted {args.algorithm} leaf certificate")
+    print(f"  SCT timestamp : {response.get('timestamp')}")
+    print(f"  leaf index    : {leaf_index}")
+
+    deadline = time.time() + args.timeout
+    entry = None
+    checkpoint = None
+    while time.time() < deadline:
+        entries = client.entries()
+        entry = next((e for e in entries if e.certificate == leaf_der), None)
+        try:
+            checkpoint = note.parse_checkpoint(client.checkpoint_bytes())
+        except FileNotFoundError:
+            checkpoint = None
+        if entry and checkpoint and checkpoint.size > entry.leaf_index:
+            break
+        time.sleep(0.25)
+
+    if entry is None:
+        print("submitted entry was not found in the log", file=sys.stderr)
+        return 1
+    if checkpoint is None:
+        print("checkpoint was not published in time", file=sys.stderr)
+        return 1
+
+    proof = client.inclusion_proof(entry.leaf_index)
+    inclusion_ok = merkle.verify_inclusion(
+        entry.leaf_hash(), entry.leaf_index, checkpoint.size, proof, checkpoint.root_hash
+    )
+    print(f"Checkpoint    : size={checkpoint.size} root={checkpoint.root_hash.hex()}")
+    print(f"Inclusion     : {'VALID' if inclusion_ok else 'INVALID'} ({len(proof)} audit hash(es))")
+
+    signature_ok = None
+    if args.log_key and Path(args.log_key).exists():
+        public_key = note.load_public_key(args.log_key)
+        signature_ok = note.verify_checkpoint(checkpoint, public_key)
+        print(f"Checkpoint sig: {'VALID' if signature_ok else 'INVALID'}")
+
+    return 0 if inclusion_ok and signature_ok is not False else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lab.cli", description="Merkle Tree Lab client")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -192,6 +251,16 @@ def build_parser() -> argparse.ArgumentParser:
     measure_cmd.add_argument("--openssl", help="OpenSSL binary (default: $OPENSSL or 'openssl')")
     measure_cmd.add_argument("--force", action="store_true", help="regenerate even if present")
     measure_cmd.set_defaults(func=cmd_measure)
+
+    demo_cmd = sub.add_parser("demo", help="submit a cert and verify its inclusion proof")
+    demo_cmd.add_argument("--log", default="http://127.0.0.1:6962")
+    demo_cmd.add_argument("--storage-dir", default="log")
+    demo_cmd.add_argument("--pki-dir", default="out/pki")
+    demo_cmd.add_argument("--algorithm", default="mldsa65", choices=sorted(pki.ALGORITHMS))
+    demo_cmd.add_argument("--log-key", default="out/log-key.pem", help="log signing key (PEM)")
+    demo_cmd.add_argument("--openssl", help="OpenSSL binary")
+    demo_cmd.add_argument("--timeout", type=float, default=30.0)
+    demo_cmd.set_defaults(func=cmd_demo)
 
     return parser
 

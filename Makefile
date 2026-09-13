@@ -48,7 +48,7 @@ measure: ## Measure certificate/key/signature sizes (generates missing PKIs)
 	$(PYTHON) -m lab.cli measure --generate
 
 demo: ## Submit a certificate and verify its inclusion proof (needs lab-up)
-	$(PYTHON) -m lab.cli demo --origin $(ORIGIN) --storage-dir $(STORAGE_DIR)
+	$(PYTHON) -m lab.cli demo --storage-dir $(STORAGE_DIR) --log-key $(LOG_KEY)
 
 workshop: ## Run the full end-to-end happy path
 	./scripts/workshop.sh
