@@ -1,0 +1,6 @@
+# Merkle Tree Lab — Python requirements
+#
+# The client is intentionally light on dependencies: HTTP and JSON use the
+# standard library, and only ECDSA checkpoint-signature verification needs
+# `cryptography`. Tests use the standard-library `unittest` runner.
+cryptography>=41
