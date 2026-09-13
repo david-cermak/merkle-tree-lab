@@ -85,7 +85,8 @@ def _cosign(checkpoint_text: bytes, name: str, private_key) -> bytes:
     )
     key_hash = note.cosignature_key_hash(name, public_bytes)
     raw = key_hash.to_bytes(4, "big") + timestamp.to_bytes(8, "big") + signature
-    return checkpoint_text + b"\n" + "\u2014 ".encode() + name.encode() + b" " + base64.b64encode(raw) + b"\n"
+    line = "\u2014 ".encode() + name.encode() + b" " + base64.b64encode(raw) + b"\n"
+    return checkpoint_text + b"\n" + line
 
 
 class TestWitnessCosignature(unittest.TestCase):

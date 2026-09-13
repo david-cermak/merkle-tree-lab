@@ -39,15 +39,23 @@ class Algorithm:
 
 
 ALGORITHMS: Dict[str, Algorithm] = {
-    "ecdsa-p256": Algorithm("ecdsa-p256", "ECDSA P-256", "classical", ["ec", "-pkeyopt", "ec_paramgen_curve:P-256"]),
+    "ecdsa-p256": Algorithm(
+        "ecdsa-p256", "ECDSA P-256", "classical", ["ec", "-pkeyopt", "ec_paramgen_curve:P-256"]
+    ),
     "rsa-2048": Algorithm("rsa-2048", "RSA-2048", "classical", ["rsa:2048"]),
     "ed25519": Algorithm("ed25519", "Ed25519", "classical", ["ed25519"]),
     "mldsa44": Algorithm("mldsa44", "ML-DSA-44", "pqc", ["ML-DSA-44"]),
     "mldsa65": Algorithm("mldsa65", "ML-DSA-65", "pqc", ["ML-DSA-65"]),
     "mldsa87": Algorithm("mldsa87", "ML-DSA-87", "pqc", ["ML-DSA-87"]),
-    "slhdsa-sha2-128s": Algorithm("slhdsa-sha2-128s", "SLH-DSA-SHA2-128s", "pqc", ["SLH-DSA-SHA2-128s"]),
-    "slhdsa-sha2-128f": Algorithm("slhdsa-sha2-128f", "SLH-DSA-SHA2-128f", "pqc", ["SLH-DSA-SHA2-128f"]),
-    "slhdsa-shake-128s": Algorithm("slhdsa-shake-128s", "SLH-DSA-SHAKE-128s", "pqc", ["SLH-DSA-SHAKE-128s"]),
+    "slhdsa-sha2-128s": Algorithm(
+        "slhdsa-sha2-128s", "SLH-DSA-SHA2-128s", "pqc", ["SLH-DSA-SHA2-128s"]
+    ),
+    "slhdsa-sha2-128f": Algorithm(
+        "slhdsa-sha2-128f", "SLH-DSA-SHA2-128f", "pqc", ["SLH-DSA-SHA2-128f"]
+    ),
+    "slhdsa-shake-128s": Algorithm(
+        "slhdsa-shake-128s", "SLH-DSA-SHAKE-128s", "pqc", ["SLH-DSA-SHAKE-128s"]
+    ),
     "falcon512": Algorithm("falcon512", "Falcon-512", "pqc", ["falcon512"]),
     "falcon1024": Algorithm("falcon1024", "Falcon-1024", "pqc", ["falcon1024"]),
 }

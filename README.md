@@ -58,17 +58,34 @@ python3 -m pip install -r requirements.txt
 make pki ALG=mldsa65
 make measure
 
-# 2. Build and start the local CT log
+# 2. Use the private PQC PKI over TLS (one server, one client)
+make tls-demo
+
+# 3. Build and start the local CT log
 make lab-up
 
-# 3. Submit a certificate and verify its inclusion proof
+# 4. Submit a certificate, verify the proof, walk it, size a bundle
 make demo
+make walk INDEX=0
+make bundle INDEX=0
 
-# 4. Stop the log
+# 5. Demonstrate native witnessing (log + witness + cosignature)
+make witness-demo
+
+# 6. Stop the log
 make lab-down
 ```
 
-Run `make help` to see all targets.
+Run `make help` to see all targets, or `make workshop` for the whole happy path
+(which is also the smoke test).
+
+## Workshop materials
+
+- Agenda: [`docs/mtc_workshop.md`](docs/mtc_workshop.md)
+- Facilitator notes and timing: [`docs/facilitator_notes.md`](docs/facilitator_notes.md)
+- Student exercises: [`docs/exercises/`](docs/exercises/)
+- Implementation walkthrough: [`IMPL.md`](IMPL.md)
+- Engineering plan: [`PLAN.md`](PLAN.md)
 
 ## Repository layout
 
@@ -76,14 +93,16 @@ Run `make help` to see all targets.
 lab/                     Python client and tooling
   merkle.py              RFC6962 hashing, tree building, inclusion proofs
   certs.py               PEM/DER parsing and size measurement
-  note.py                Signed-checkpoint (note) parsing and verification
+  note.py                Signed-checkpoint parsing, ECDSA + cosignature verification
   staticct.py            static-ct-api HTTP client + tlog-tiles reader
   pki.py                 OpenSSL-based multi-algorithm PKI generation
   measure.py             Certificate/signature size measurement
+  bundle.py              MTC-shaped bundle assembly and size comparison
   cli/                   Command-line entry points
-scripts/                 Shell helpers (TesseraCT runner, workshop script, OpenSSL configs)
+scripts/                 Shell helpers (TesseraCT/witness runners, demos, OpenSSL configs)
+tools/witness/           Minimal local tlog-witness server (Go)
 tests/                   Unit tests (standard-library unittest)
-docs/                    Workshop agenda and facilitator material
+docs/                    Agenda, facilitator notes, and student exercises
 impl/tesseract/          TesseraCT git submodule (pinned)
 ```
 

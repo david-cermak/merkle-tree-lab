@@ -91,7 +91,9 @@ def der_to_pem(der: bytes, label: str = "CERTIFICATE") -> bytes:
     """Wrap DER bytes in PEM markers."""
     body = base64.encodebytes(der).replace(b"\n", b"")
     wrapped = b"\n".join(body[i : i + 64] for i in range(0, len(body), 64))
-    return b"-----BEGIN " + label.encode() + b"-----\n" + wrapped + b"\n-----END " + label.encode() + b"-----\n"
+    begin = b"-----BEGIN " + label.encode() + b"-----\n"
+    end = b"\n-----END " + label.encode() + b"-----\n"
+    return begin + wrapped + end
 
 
 def _read_tlv(data: bytes, offset: int) -> Tuple[int, int, int]:

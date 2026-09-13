@@ -4,7 +4,7 @@ This document explains, workstream by workstream, how the lab is implemented and
 piece works the way it does. It is written for workshop participants: read it alongside the code
 under `lab/` and the shell scripts under `scripts/`.
 
-The lab has four implemented workstreams:
+The lab has these implemented workstreams:
 
 | Workstream | Theme | Main artifacts |
 |---|---|---|
@@ -12,9 +12,14 @@ The lab has four implemented workstreams:
 | **WS2** | Python static-ct client | `lab/merkle.py`, `lab/certs.py`, `lab/note.py`, `lab/staticct.py`, `lab/cli/` |
 | **WS3** | PQC PKI & size measurement | `lab/pki.py`, `lab/measure.py`, `scripts/openssl/*`, `scripts/tls_demo.sh` |
 | **WS4** | CT log lab | `scripts/run_tesseract.sh`, `lab.cli demo`, `scripts/workshop.sh` |
+| **WS5** | Merkle proof walkthrough | `lab/merkle.py` `explain_inclusion`, `lab.cli walk`, `docs/exercises/05_*` |
+| **WS6** | Checkpoints & witnesses | `lab/note.py` `verify_cosignature`, `tools/witness/`, `scripts/witness_demo.sh` |
+| **WS7** | MTC-shaped bundle | `lab/bundle.py`, `lab.cli bundle` |
+| **WS9** | Workshop materials | `docs/facilitator_notes.md`, `docs/exercises/`, `abstract.md` |
+| **WS10** | Verification & CI | `tests/`, `.github/workflows/ci.yml`, `scripts/workshop.sh` |
 
-Planned but **not** part of this iteration: Merkle-proof worksheet material (WS5), witness deep
-dive (WS6), MTC-shaped bundle (WS7), and the optional Falcon/oqs-provider showcase (WS8).
+WS8 (optional Falcon via oqs-provider) is intentionally **not** implemented yet; SLH-DSA and
+Falcon are measurement-only.
 
 ---
 
@@ -421,8 +426,155 @@ a good demonstration that the log is a set, not a stream.
 
 ### 4.3 The whole path — `make workshop`
 
-`scripts/workshop.sh` chains everything: measure, `lab-up`, `demo`, `lab-down` (via a trap). If
-this completes, the environment is healthy.
+`scripts/workshop.sh` chains the smoke test: measure, `lab-up`, `demo`, `walk`, `checkpoint`
+verification, `bundle`, then `lab-down` (via a trap). If this completes, the environment is
+healthy.
+
+---
+
+## WS5 — Merkle proof walkthrough
+
+WS2 already builds and verifies proofs. WS5 makes the process *visible*.
+
+`lab/merkle.py` exposes `explain_inclusion(leaf_hash, index, size, proof)`, which folds the
+audit path back to the root exactly like `root_from_inclusion_proof`, but records each step:
+the sibling hash, whether it was used on the **left** or the **right**, and the resulting hash.
+The split into the *inner* part (parity-driven, siblings on either side) and the *border* part
+(left siblings only) is printed so students can see why a CT tree is not a perfect binary tree.
+
+```bash
+make walk INDEX=2
+# or: python3 -m lab.cli walk --storage-dir log --index 2
+```
+
+The command prints the leaf hash, every hashing step, and finally compares the computed root
+with the checkpoint root (`MATCH: True`). The companion worksheet is
+`docs/exercises/05_merkle_proofs.md`.
+
+---
+
+## WS6 — Checkpoints, witnesses, and cosignatures
+
+### 6.1 The problem
+
+A log can publish two different checkpoints of the same size (a *split view*). An inclusion
+proof only shows a certificate is in *some* tree; it does not pin *which* tree. A **witness**
+fixes this by independently checking append-only behaviour and cosigning the checkpoint.
+
+### 6.2 The local witness — `tools/witness/`
+
+TesseraCT has native witnessing support (`--witness_policy_file`, `--additional_signer`), but it
+needs a witness endpoint. The public witness network requires registering your log key, so for an
+offline workshop we ship a minimal witness server:
+
+```
+tools/witness keygen --name NAME --out FILE   # Ed25519 note key + cosignature verifier
+tools/witness serve  --listen ADDR --signer-key FILE --log-vkey FILE
+```
+
+The server wraps `github.com/transparency-dev/witness` with an in-memory store, trusts the log's
+additional signer key via `VerifierForLog`, and exposes the tlog-witness
+`POST /add-checkpoint` endpoint.
+
+### 6.3 Wiring it up
+
+`scripts/setup_witness.sh` generates, under `out/witness/`:
+
+* `log-signer.key` — an Ed25519 note signer used by TesseraCT's `--additional_signer`;
+* `log-vkey.txt` — its verifier key, trusted by the witness;
+* `witness.key` / `witness-vkey.txt` — the witness key and its **CosignatureV1** verifier key;
+* `policy.txt` — a Sigsum-format witness policy.
+
+`scripts/run_tesseract.sh` passes `--additional_signer` and `--witness_policy_file` when
+`ADDITIONAL_SIGNER` and `WITNESS_POLICY` are set. `scripts/witness_demo.sh` (and
+`make witness-demo`) runs the whole flow.
+
+After enabling witnessing, the checkpoint gains a third signature line:
+
+```
+— example.com/workshop ...   (primary ECDSA, RFC6962)
+— example.com/workshop ...   (additional Ed25519 log signer)
+— witness.local ...          (witness cosignature)
+```
+
+### 6.4 Verifying cosignatures in Python
+
+`lab/note.py` implements C2SP tlog-cosignature. The signed message is:
+
+```
+cosignature/v1
+time <unix seconds>
+<checkpoint note text>
+```
+
+and the signature line's base64 decodes to `keyhash(4) || timestamp(8) || ed25519 sig(64)`.
+The key hash is `SHA256(name || "\n" || 0x04 || ed25519_pubkey)` truncated to 4 bytes. The
+`checkpoint` CLI command verifies it:
+
+```bash
+python3 -m lab.cli checkpoint --storage-dir log \
+  --pubkey out/log-key.pem --witness-vkey out/witness/witness-vkey.txt
+# log signature  : VALID
+# witness cosig  : VALID (witness.local)
+```
+
+Worksheet: `docs/exercises/06_witnesses.md`.
+
+---
+
+## WS7 — The MTC-shaped bundle
+
+`lab/bundle.py` assembles the pieces the lab already produces into one JSON object:
+
+```
+certificate + inclusion proof + signed checkpoint + signatures
+```
+
+`lab.cli bundle` builds it for a leaf, writes `out/mtc_bundle.json`, and reports its size against
+both a single conventional leaf certificate and a full chain:
+
+```bash
+make bundle INDEX=0
+```
+
+Representative single-certificate result (ML-DSA-65):
+
+```
+conventional leaf certificate          : 5599 bytes
+conventional chain (leaf+intermediate) : 11143 bytes
+MTC-shaped bundle (JSON, base64 cert)  : 8298 bytes
+```
+
+The bundle is **not** the MTC wire format — it is a teaching artifact. It is JSON with a base64
+certificate (~33% overhead), and for one certificate it may be larger or smaller than the chain.
+The point is the *shape* of the trade: a conventional certificate repeats a large PQ signature,
+whereas the bundle replaces it with a short audit path plus a shared, witnessed checkpoint
+signature. The exercise asks students to reason about the crossover scale.
+
+Worksheet: `docs/exercises/07_mtc_bundle.md`.
+
+---
+
+## WS9 — Workshop materials and end-to-end flow
+
+* `README.md` — prerequisites, quickstart, repository layout, materials index.
+* `abstract.md` — updated to the TesseraCT + Python + PQC + witness story.
+* `docs/facilitator_notes.md` — timing table, talking points, expected outputs, common failures,
+  and what is intentionally out of scope.
+* `docs/exercises/` — six worksheets (`01`, `02`, `04`, `05`, `06`, `07`) plus an index.
+* `scripts/workshop.sh` — the single end-to-end command (`make workshop`), also used as the
+  smoke test.
+
+## WS10 — Verification and CI
+
+* `tests/` — 26 unit tests covering hashing, proofs (sizes 1..39), note signatures, witness
+  cosignatures, entry bundles, DER sizes, PKI measurement, and bundles.
+* `make test` runs them with the standard-library `unittest` runner (no extra dependency).
+* `make lint` runs `ruff check lab tests` (config in `pyproject.toml`).
+* `.github/workflows/ci.yml` runs lint + unit tests on Python 3.12, and builds the witness tool
+  with Go 1.25.
+* `make workshop` is the manual smoke test (needs Go 1.27 and OpenSSL 3.5, so it is not run in
+  CI).
 
 ---
 
@@ -441,12 +593,16 @@ cat out/measurements.md
 make pki ALG=mldsa65
 make tls-demo
 
-# sections 4-5: a CT log, submission, and inclusion proof
+# sections 4-7: a CT log, submission, proof, witness, and bundle
 make lab-up
 make demo
-python3 -m lab.cli proof  --storage-dir log --index 0
+make walk INDEX=0
 python3 -m lab.cli verify --storage-dir log --index 0 --pubkey out/log-key.pem
+make bundle INDEX=0
 make lab-down
+
+# native witnessing (starts a local witness + a witnessed log)
+make witness-demo
 
 # or everything at once
 make workshop
@@ -462,8 +618,10 @@ make workshop
 | `error 79 ... invalid CA certificate` from `openssl verify` | intermediate missing `CA:TRUE` | use `scripts/openssl/ca_ext.cnf` |
 | `checkpoint was not published in time` | server not running or wrong `--storage-dir` | check `log/tesseract.log`, `make lab-up` |
 | `failed to verify add-chain contents` | leaf does not chain to `--roots_pem_file` | generate the PKI that matches the configured root |
+| checkpoint has only 2 signatures | log started without witness flags | `make witness-demo` (sets `ADDITIONAL_SIGNER`/`WITNESS_POLICY`) |
+| witness cosignature invalid | wrong `--witness-vkey`, or witness restarted with a new key | re-run `scripts/setup_witness.sh`; keys are persisted under `out/witness/` |
 | `Permission denied` running a script | missing exec bit | `chmod +x scripts/*.sh` |
-| stale PID / port in use | previous run not stopped | `make lab-down` (or `pkill -x tesseract-posix`) |
+| stale PID / port in use | previous run not stopped | `make lab-down`; `scripts/run_witness.sh stop` |
 
 ---
 
@@ -473,17 +631,19 @@ make workshop
 |---|---|
 | 1. Baseline PQC cost | `make measure`, `lab/certs.py`, `lab/pki.py` |
 | 2. PQC X.509 without MTC | `make tls-demo` |
-| 3. Algorithm landscape | measurement table; Falcon optional via oqs-provider (WS8) |
+| 3. Algorithm landscape | measurement table; Falcon optional via oqs-provider (WS8, skipped) |
 | 4. Run your own CT log | `make lab-up`, `make demo`, `lab/staticct.py` |
-| 5. Merkle proofs | `lab/merkle.py`, `lab.cli proof`/`verify` |
-| 6. Checkpoints & witnesses | signed checkpoint + `lab/note.py`; native witness (future) |
-| 7. MTC-shaped certificate | not implemented yet (WS7) |
+| 5. Merkle proofs | `lab/merkle.py`, `make walk`, `lab.cli proof`/`verify` |
+| 6. Checkpoints & witnesses | `lab/note.py`, `tools/witness/`, `make witness-demo` |
+| 7. MTC-shaped certificate | `lab/bundle.py`, `make bundle` |
+| 8–9. Discussion | `docs/facilitator_notes.md` |
 
 ---
 
 ## 8. Commit map
 
-Each workstream landed as its own commit:
+Each workstream landed as its own commit (WS5+WS7 share a commit because their CLI wiring is
+intertwined):
 
 | Commit | Workstream |
 |---|---|
@@ -491,3 +651,6 @@ Each workstream landed as its own commit:
 | `feat(ws2): Python static-ct client and RFC6962 Merkle proofs` | WS2 |
 | `feat(ws3): multi-algorithm PKI, size measurement, and TLS demo` | WS3 |
 | `feat(ws4): TesseraCT runner and end-to-end submit/verify demo` | WS4 |
+| `feat(ws5+ws7): Merkle walkthrough and MTC-shaped bundle` | WS5, WS7 |
+| `feat(ws6): native Tessera witness and cosignature verification` | WS6 |
+| `docs(ws9+ws10): facilitator notes, exercises, CI` | WS9, WS10 |

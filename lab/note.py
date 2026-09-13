@@ -25,7 +25,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 SIGNATURE_TYPE_TREE_HASH = 0x01
 HASH_ALG_SHA256 = 0x04
@@ -222,7 +222,9 @@ def parse_vkey(vkey: str) -> tuple[str, int, bytes]:
 
 def cosignature_key_hash(name: str, key_bytes: bytes) -> int:
     """Compute the note key hash for an Ed25519CosignatureV1 key."""
-    digest = hashlib.sha256(name.encode() + b"\n" + bytes([COSIG_ALG_ED25519_V1]) + key_bytes).digest()
+    digest = hashlib.sha256(
+        name.encode() + b"\n" + bytes([COSIG_ALG_ED25519_V1]) + key_bytes
+    ).digest()
     return int.from_bytes(digest[:4], "big")
 
 

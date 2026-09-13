@@ -13,7 +13,8 @@ class TestHashing(unittest.TestCase):
 
     def test_node_hash_uses_0x01_prefix(self):
         left, right = b"L" * 32, b"R" * 32
-        self.assertEqual(merkle.hash_children(left, right), hashlib.sha256(b"\x01" + left + right).digest())
+        expected = hashlib.sha256(b"\x01" + left + right).digest()
+        self.assertEqual(merkle.hash_children(left, right), expected)
 
     def test_empty_root(self):
         self.assertEqual(merkle.empty_root(), hashlib.sha256(b"").digest())

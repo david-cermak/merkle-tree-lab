@@ -1,14 +1,36 @@
-# Abstract: Post-Quantum Signatures, Today
+# Abstract: Post-Quantum Signatures and Merkle Tree Certificates, Today
 
-Add devs know how to create a local test environment using self-signed certs, your own CI and trust chain, but what if we need PQsafe signatures? Let's go over step by step how we could make it and how we can benefit from the merkle tree idea presented by Google.
+Developers know how to stand up a local test PKI with self-signed certificates,
+their own CI, and their own trust chain. But what if those signatures need to be
+quantum-safe? Post-quantum cryptography is here, but the standards and tooling
+are still moving. This workshop shows how far you can get **right now**, using
+tools already on your laptop: OpenSSL 3.5, Go, and Python.
 
-Post-quantum cryptography is coming, but standards are slow. We don't have to wait. This workshop shows how to roll out quantum-resistant signatures in your own infrastructure right now, using the tools already on our laptops: OpenSSL, Docker, and Go.
+We build two things:
 
-We'll build a mini Certificate Transparency log with [Trillian](https://github.com/google/trillian) — Google's Merkle tree implementation — and turn it into a practical, PQsafe signing chain:
+1. **A private post-quantum PKI.** Using OpenSSL 3.5's built-in ML-DSA and
+   SLH-DSA support, we generate root → intermediate → leaf chains, measure how
+   large PQC certificates really are, and use an ML-DSA certificate over TLS 1.3.
+   The lesson: if you control both ends, conventional PQC X.509 works today and
+   may be all you need.
 
-1. **Why Merkle trees?** A single signed tree root authenticates an unlimited number of leaves, so one trusted key can vouch for many certificates — a natural fit for hash-based, post-quantum schemes.
-2. **Local-first setup.** Spin up the log server and signer in Docker, then watch certificates flow in as leaves.
-3. **Proofs, not trust.** An inclusion proof lets any verifier confirm a certificate is part of the tree without trusting the log operator. Add a STH (signed tree head) and you have an audit trail anyone can check.
-4. **Bringing it to PQ.** Combine hash-based signatures with the log's root signatures so the chain stays quantum-safe — no new PKI, no waiting on a standard.
+2. **A local Certificate Transparency log.** Using
+   [TesseraCT](https://github.com/transparency-dev/tesseract)'s POSIX backend —
+   a single binary, no database, no containers — we run a CT log, submit
+   post-quantum certificates, and read its signed checkpoint and Merkle tiles.
+   A small Python client then rebuilds the Merkle tree, produces inclusion
+   proofs, verifies them against the checkpoint, and checks the checkpoint's
+   signature.
 
-By the end you'll have a working lab, a merkle certificate bundle you generated yourself, and a clear path to start experimenting with PQsafe signatures in your own environments today.
+Finally we add a **witness** that cosigns the checkpoint, and assemble an
+**MTC-shaped bundle**: certificate + inclusion proof + signed, witnessed
+checkpoint. We compare its size against a conventional PQC certificate and ask
+the engineering question that matters:
+
+> At what scale does amortizing one large signature across many certificates
+> become worthwhile?
+
+By the end you will have generated PQC chains, logged certificates into your own
+transparency log, verified inclusion and cosignatures from scratch, and a clear
+mental model of when to use conventional PQC X.509 versus Merkle Tree
+Certificates.
