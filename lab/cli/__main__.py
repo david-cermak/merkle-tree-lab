@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import certs, merkle, note, staticct
+from .. import certs, measure, merkle, note, pki, staticct
 
 
 def _hex(data: bytes) -> str:
@@ -114,6 +114,36 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_pki(args: argparse.Namespace) -> int:
+    pki.ensure_openssl(args.openssl)
+    paths = pki.generate(
+        args.algorithm, Path(args.outdir), openssl=args.openssl, force=args.force
+    )
+    print(f"Generated {paths.algorithm} PKI in {paths.directory}")
+    print(f"  root : {paths.root_crt}")
+    print(f"  int  : {paths.int_crt}")
+    print(f"  leaf : {paths.leaf_crt}")
+    return 0
+
+
+def cmd_measure(args: argparse.Namespace) -> int:
+    pki_dir = Path(args.pki_dir)
+    if args.generate:
+        pki.ensure_openssl(args.openssl)
+        algorithms = args.algorithms or pki.DEFAULT_ALGORITHMS
+        print(f"Generating {len(algorithms)} PKI(s) in {pki_dir} ...")
+        pki.generate_all(algorithms, pki_dir, openssl=args.openssl, force=args.force)
+
+    measurements = measure.measure_directory(pki_dir)
+    if not measurements:
+        print(f"no generated PKIs found in {pki_dir}", file=sys.stderr)
+        return 1
+    print(measure.format_markdown(measurements))
+    measure.write_reports(measurements, Path(args.json), Path(args.markdown))
+    print(f"Wrote {args.json} and {args.markdown}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lab.cli", description="Merkle Tree Lab client")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -145,6 +175,23 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--proof", help="proof JSON file (default: recompute)")
     verify.add_argument("--pubkey", help="also verify the checkpoint signature")
     verify.set_defaults(func=cmd_verify)
+
+    pki_cmd = sub.add_parser("pki", help="generate a root/intermediate/leaf PKI")
+    pki_cmd.add_argument("--algorithm", default="mldsa65", choices=sorted(pki.ALGORITHMS))
+    pki_cmd.add_argument("--outdir", default="out/pki")
+    pki_cmd.add_argument("--openssl", help="OpenSSL binary (default: $OPENSSL or 'openssl')")
+    pki_cmd.add_argument("--force", action="store_true", help="regenerate even if present")
+    pki_cmd.set_defaults(func=cmd_pki)
+
+    measure_cmd = sub.add_parser("measure", help="measure certificate/signature sizes")
+    measure_cmd.add_argument("--pki-dir", default="out/pki")
+    measure_cmd.add_argument("--json", default="out/measurements.json")
+    measure_cmd.add_argument("--markdown", default="out/measurements.md")
+    measure_cmd.add_argument("--generate", action="store_true", help="generate missing PKIs first")
+    measure_cmd.add_argument("--algorithms", nargs="+", choices=sorted(pki.ALGORITHMS))
+    measure_cmd.add_argument("--openssl", help="OpenSSL binary (default: $OPENSSL or 'openssl')")
+    measure_cmd.add_argument("--force", action="store_true", help="regenerate even if present")
+    measure_cmd.set_defaults(func=cmd_measure)
 
     return parser
 

@@ -15,7 +15,7 @@ ROOTS_PEM   ?= out/pki/mldsa65/root.crt
 LOG_KEY     ?= out/log-key.pem
 
 .DEFAULT_GOAL := help
-.PHONY: help submodules build-tesseract lab-up lab-down pki measure demo workshop test lint clean
+.PHONY: help submodules build-tesseract lab-up lab-down pki pki-all tls-demo measure demo workshop test lint clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -35,11 +35,17 @@ lab-up: build-tesseract ## Build and start the local TesseraCT POSIX log
 lab-down: ## Stop the local TesseraCT log
 	./scripts/run_tesseract.sh stop
 
-pki: ## Generate the workshop PKI (override with ALG=mldsa65 etc.)
+pki: ## Generate one PKI (override with ALG=mldsa65 etc.)
 	$(PYTHON) -m lab.cli pki --algorithm $(or $(ALG),mldsa65)
 
-measure: ## Measure certificate/key/signature sizes across algorithms
-	$(PYTHON) -m lab.cli measure
+pki-all: ## Generate the full measurement set of PKIs
+	./scripts/gen_pki.sh
+
+tls-demo: ## Run the private-PQC-PKI TLS demo (ALG=mldsa65)
+	ALG=$(or $(ALG),mldsa65) ./scripts/tls_demo.sh
+
+measure: ## Measure certificate/key/signature sizes (generates missing PKIs)
+	$(PYTHON) -m lab.cli measure --generate
 
 demo: ## Submit a certificate and verify its inclusion proof (needs lab-up)
 	$(PYTHON) -m lab.cli demo --origin $(ORIGIN) --storage-dir $(STORAGE_DIR)

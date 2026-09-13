@@ -1,0 +1,10 @@
+# OpenSSL extension config for intermediate CA certificates.
+#
+# `openssl x509 -req` does not mark a certificate as a CA unless we tell it
+# to. Without basicConstraints=CA:TRUE, `openssl verify` fails with
+# "error 79 at 1 depth lookup: invalid CA certificate".
+[v3_ca]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid, issuer

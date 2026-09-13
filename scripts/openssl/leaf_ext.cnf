@@ -1,0 +1,11 @@
+# OpenSSL extension config for end-entity (leaf) certificates.
+#
+# The SAN and EKUs make the certificate usable for the TLS demo; the
+# basicConstraints/keyUsage fields keep it a proper leaf.
+[v3_leaf]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = serverAuth
+subjectAltName = DNS:leaf.example
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid, issuer
