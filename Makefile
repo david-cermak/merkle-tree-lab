@@ -15,7 +15,7 @@ ROOTS_PEM   ?= out/pki/mldsa65/root.crt
 LOG_KEY     ?= out/log-key.pem
 
 .DEFAULT_GOAL := help
-.PHONY: help submodules build-tesseract lab-up lab-down pki pki-all tls-demo measure demo workshop test lint clean
+.PHONY: help submodules build-tesseract build-witness lab-up lab-down pki pki-all tls-demo measure demo walk bundle witness-setup witness-demo workshop test lint clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -49,6 +49,23 @@ measure: ## Measure certificate/key/signature sizes (generates missing PKIs)
 
 demo: ## Submit a certificate and verify its inclusion proof (needs lab-up)
 	$(PYTHON) -m lab.cli demo --storage-dir $(STORAGE_DIR) --log-key $(LOG_KEY)
+
+walk: ## Print an inclusion proof hash-by-hash (needs lab-up)
+	$(PYTHON) -m lab.cli walk --storage-dir $(STORAGE_DIR) --index $(or $(INDEX),0)
+
+bundle: ## Build and size an MTC-shaped bundle (needs lab-up)
+	$(PYTHON) -m lab.cli bundle --storage-dir $(STORAGE_DIR) --index $(or $(INDEX),0) \
+		--output out/mtc_bundle.json
+
+build-witness: ## Build the local tlog witness (requires Go 1.27)
+	mkdir -p $(BIN_DIR)
+	cd tools/witness && GOTOOLCHAIN=$(GOTOOLCHAIN) $(GO) build -o ../../$(BIN_DIR)/witness .
+
+witness-setup: build-witness ## Generate witness keys and policy
+	./scripts/setup_witness.sh
+
+witness-demo: ## Run the native-witness demo (start witness + log, verify cosignature)
+	./scripts/witness_demo.sh
 
 workshop: ## Run the full end-to-end happy path
 	./scripts/workshop.sh

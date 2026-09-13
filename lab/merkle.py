@@ -143,3 +143,45 @@ def verify_inclusion(
         return root_from_inclusion_proof(index, tree_size, leaf_hash, proof) == root
     except (IndexError, ValueError):
         return False
+
+
+def explain_inclusion(
+    leaf_hash: bytes,
+    index: int,
+    tree_size: int,
+    proof: Sequence[bytes],
+) -> tuple[bytes, list[dict]]:
+    """Recompute the root while describing each hashing step.
+
+    Returns ``(computed_root, steps)`` where each step records the sibling, its
+    side, the hash before and after, and whether the step is part of the inner
+    proof or the right border. This is what the ``walk`` command prints.
+    """
+    inner, _border = decomp_incl_proof(index, tree_size)
+    steps: list[dict] = []
+    current = leaf_hash
+    for level, sibling in enumerate(proof):
+        if level < inner:
+            if (index >> level) & 1 == 0:
+                side = "right"
+                nxt = hash_children(current, sibling)
+            else:
+                side = "left"
+                nxt = hash_children(sibling, current)
+            kind = "inner"
+        else:
+            side = "left"
+            nxt = hash_children(sibling, current)
+            kind = "border"
+        steps.append(
+            {
+                "level": level,
+                "kind": kind,
+                "side": side,
+                "sibling": sibling,
+                "before": current,
+                "after": nxt,
+            }
+        )
+        current = nxt
+    return current, steps
