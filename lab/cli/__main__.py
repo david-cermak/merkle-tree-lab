@@ -17,6 +17,33 @@ def _hex(data: bytes) -> str:
     return data.hex()
 
 
+def _print_chain(chain: list[bytes]) -> None:
+    """Verbose summary of the chain that will be POSTed to the log."""
+    total = sum(len(der) for der in chain)
+    print(f"chain: {len(chain)} certificate(s), {total} bytes DER total")
+    for i, der in enumerate(chain):
+        role = "leaf" if i == 0 else "issuer"
+        b64_len = len(base64.b64encode(der))
+        print(f"  [{i}] {role:<6} {len(der)} bytes DER -> {b64_len} base64 chars")
+
+
+def _print_entry(entry: staticct.Entry) -> None:
+    """Verbose description of a logged entry and its MerkleTreeLeaf."""
+    kind = "precert" if entry.is_precert else "x509"
+    print(
+        f"entry {entry.leaf_index}: type={kind} timestamp={entry.timestamp} "
+        f"cert={len(entry.certificate)} bytes extensions={entry.extensions.hex()} "
+        f"fingerprints={len(entry.fingerprints)} bytes"
+    )
+    leaf = entry.merkle_tree_leaf()
+    entry_type = 1 if entry.is_precert else 0
+    print(
+        f"  MerkleTreeLeaf: {len(leaf)} bytes "
+        f"(version=0, leaf_type=0, entry_type={entry_type}, "
+        f"cert_len={len(entry.certificate)}, ext_len={len(entry.extensions)})"
+    )
+
+
 def cmd_submit(args: argparse.Namespace) -> int:
     chain = []
     for path in args.chain:
@@ -24,7 +51,9 @@ def cmd_submit(args: argparse.Namespace) -> int:
     if not chain:
         print("no certificates found", file=sys.stderr)
         return 1
-    client = staticct.StaticCTClient(args.log, args.storage_dir)
+    if args.verbose:
+        _print_chain(chain)
+    client = staticct.StaticCTClient(args.log, args.storage_dir, verbose=args.verbose)
     response = client.add_chain(chain)
     extensions = base64.b64decode(response.get("extensions", ""))
     try:
@@ -50,7 +79,7 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
     if args.file:
         checkpoint = note.read_checkpoint(args.file)
     else:
-        client = staticct.StaticCTClient(args.log or "", args.storage_dir)
+        client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
         checkpoint = note.parse_checkpoint(client.checkpoint_bytes())
     print(f"origin      : {checkpoint.origin}")
     print(f"tree size   : {checkpoint.size}")
@@ -74,7 +103,7 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
 
 
 def cmd_proof(args: argparse.Namespace) -> int:
-    client = staticct.StaticCTClient(args.log or "", args.storage_dir)
+    client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
     entries = client.entries()
     if not 0 <= args.index < len(entries):
         print(f"index {args.index} out of range (log has {len(entries)} entries)", file=sys.stderr)
@@ -97,7 +126,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if args.proof:
         data = json.loads(Path(args.proof).read_text())
     else:
-        client = staticct.StaticCTClient(args.log or "", args.storage_dir)
+        client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
         entries = client.entries()
         proof = client.inclusion_proof(args.index)
         data = {
@@ -107,7 +136,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
             "audit_path": [_hex(node) for node in proof],
         }
 
-    client = staticct.StaticCTClient(args.log or "", args.storage_dir)
+    client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
     checkpoint = note.parse_checkpoint(client.checkpoint_bytes())
 
     leaf_hash = bytes.fromhex(data["leaf_hash"])
@@ -172,8 +201,10 @@ def cmd_demo(args: argparse.Namespace) -> int:
         pki.generate(args.algorithm, pki_dir, openssl=args.openssl)
     chain = certs.read_certificates(str(leaf)) + certs.read_certificates(str(intermediate))
     leaf_der = chain[0]
+    if args.verbose:
+        _print_chain(chain)
 
-    client = staticct.StaticCTClient(args.log, args.storage_dir)
+    client = staticct.StaticCTClient(args.log, args.storage_dir, verbose=args.verbose)
     response = client.add_chain(chain)
     extensions = base64.b64decode(response.get("extensions", ""))
     try:
@@ -222,12 +253,14 @@ def cmd_demo(args: argparse.Namespace) -> int:
 
 
 def cmd_walk(args: argparse.Namespace) -> int:
-    client = staticct.StaticCTClient(args.log or "", args.storage_dir)
+    client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
     entries = client.entries()
     if not 0 <= args.index < len(entries):
         print(f"index {args.index} out of range (log has {len(entries)} entries)", file=sys.stderr)
         return 1
     entry = entries[args.index]
+    if args.verbose:
+        _print_entry(entry)
     proof = client.inclusion_proof(args.index)
     root, steps = merkle.explain_inclusion(entry.leaf_hash(), args.index, len(entries), proof)
     checkpoint = note.parse_checkpoint(client.checkpoint_bytes())
@@ -249,14 +282,22 @@ def cmd_walk(args: argparse.Namespace) -> int:
 
 
 def cmd_bundle(args: argparse.Namespace) -> int:
-    client = staticct.StaticCTClient(args.log or "", args.storage_dir)
+    client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
     entries = client.entries()
     if not 0 <= args.index < len(entries):
         print(f"index {args.index} out of range (log has {len(entries)} entries)", file=sys.stderr)
         return 1
     entry = entries[args.index]
+    if args.verbose:
+        _print_entry(entry)
     checkpoint_raw = client.checkpoint_bytes()
     checkpoint = note.parse_checkpoint(checkpoint_raw)
+    if args.verbose:
+        staticct.trace("signed checkpoint (note format):\n" + checkpoint_raw.decode().rstrip())
+        staticct.trace(
+            "checkpoint signatures: "
+            + ", ".join(f"{s.name} ({s.key_hash:08x})" for s in checkpoint.signatures)
+        )
     proof = client.inclusion_proof(args.index)
 
     bundle = bundle_mod.build_bundle(
@@ -289,13 +330,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lab.cli", description="Merkle Tree Lab client")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    submit = sub.add_parser("submit", help="submit a certificate chain to the log")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="trace HTTP requests and storage reads (shows how the chain is submitted)",
+    )
+
+    submit = sub.add_parser(
+        "submit", parents=[common], help="submit a certificate chain to the log"
+    )
     submit.add_argument("--log", default="http://127.0.0.1:6962", help="log base URL")
     submit.add_argument("--storage-dir", default="log", help="log storage directory")
     submit.add_argument("--chain", nargs="+", required=True, help="PEM/DER certificate files")
     submit.set_defaults(func=cmd_submit)
 
-    checkpoint = sub.add_parser("checkpoint", help="read and print the signed checkpoint")
+    checkpoint = sub.add_parser(
+        "checkpoint", parents=[common], help="read and print the signed checkpoint"
+    )
     checkpoint.add_argument("--log", default="http://127.0.0.1:6962")
     checkpoint.add_argument("--storage-dir", default="log")
     checkpoint.add_argument("--file", help="read the checkpoint from this file instead")
@@ -305,14 +356,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     checkpoint.set_defaults(func=cmd_checkpoint)
 
-    proof = sub.add_parser("proof", help="produce an inclusion proof for a leaf index")
+    proof = sub.add_parser(
+        "proof", parents=[common], help="produce an inclusion proof for a leaf index"
+    )
     proof.add_argument("--storage-dir", default="log")
     proof.add_argument("--log", default="http://127.0.0.1:6962")
     proof.add_argument("--index", type=int, required=True)
     proof.add_argument("--output", help="write the proof JSON to this file")
     proof.set_defaults(func=cmd_proof)
 
-    verify = sub.add_parser("verify", help="verify an inclusion proof against the checkpoint")
+    verify = sub.add_parser(
+        "verify", parents=[common], help="verify an inclusion proof against the checkpoint"
+    )
     verify.add_argument("--storage-dir", default="log")
     verify.add_argument("--log", default="http://127.0.0.1:6962")
     verify.add_argument("--index", type=int, default=0)
@@ -320,20 +375,26 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--pubkey", help="also verify the checkpoint signature")
     verify.set_defaults(func=cmd_verify)
 
-    walk = sub.add_parser("walk", help="print the inclusion proof hash-by-hash")
+    walk = sub.add_parser(
+        "walk", parents=[common], help="print the inclusion proof hash-by-hash"
+    )
     walk.add_argument("--storage-dir", default="log")
     walk.add_argument("--log", default="http://127.0.0.1:6962")
     walk.add_argument("--index", type=int, required=True)
     walk.set_defaults(func=cmd_walk)
 
-    pki_cmd = sub.add_parser("pki", help="generate a root/intermediate/leaf PKI")
+    pki_cmd = sub.add_parser(
+        "pki", parents=[common], help="generate a root/intermediate/leaf PKI"
+    )
     pki_cmd.add_argument("--algorithm", default="mldsa65", choices=sorted(pki.ALGORITHMS))
     pki_cmd.add_argument("--outdir", default="out/pki")
     pki_cmd.add_argument("--openssl", help="OpenSSL binary (default: $OPENSSL or 'openssl')")
     pki_cmd.add_argument("--force", action="store_true", help="regenerate even if present")
     pki_cmd.set_defaults(func=cmd_pki)
 
-    measure_cmd = sub.add_parser("measure", help="measure certificate/signature sizes")
+    measure_cmd = sub.add_parser(
+        "measure", parents=[common], help="measure certificate/signature sizes"
+    )
     measure_cmd.add_argument("--pki-dir", default="out/pki")
     measure_cmd.add_argument("--json", default="out/measurements.json")
     measure_cmd.add_argument("--markdown", default="out/measurements.md")
@@ -343,7 +404,9 @@ def build_parser() -> argparse.ArgumentParser:
     measure_cmd.add_argument("--force", action="store_true", help="regenerate even if present")
     measure_cmd.set_defaults(func=cmd_measure)
 
-    demo_cmd = sub.add_parser("demo", help="submit a cert and verify its inclusion proof")
+    demo_cmd = sub.add_parser(
+        "demo", parents=[common], help="submit a cert and verify its inclusion proof"
+    )
     demo_cmd.add_argument("--log", default="http://127.0.0.1:6962")
     demo_cmd.add_argument("--storage-dir", default="log")
     demo_cmd.add_argument("--pki-dir", default="out/pki")
@@ -353,7 +416,9 @@ def build_parser() -> argparse.ArgumentParser:
     demo_cmd.add_argument("--timeout", type=float, default=30.0)
     demo_cmd.set_defaults(func=cmd_demo)
 
-    bundle_cmd = sub.add_parser("bundle", help="build an MTC-shaped bundle and size it")
+    bundle_cmd = sub.add_parser(
+        "bundle", parents=[common], help="build an MTC-shaped bundle and size it"
+    )
     bundle_cmd.add_argument("--storage-dir", default="log")
     bundle_cmd.add_argument("--log", default="http://127.0.0.1:6962")
     bundle_cmd.add_argument("--index", type=int, default=0)

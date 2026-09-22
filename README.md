@@ -23,12 +23,12 @@ is documented step by step for students in [`IMPL.md`](IMPL.md), and the enginee
         Python client (lab/)
    add-chain │  HTTP JSON          ┌───────────────────────────────┐
              └────────────────────►│  TesseraCT POSIX (Go 1.27)    │
-                                 │  storage: ./log               │
-   checkpoint + entry bundles    │  roots:   ./out/pki/.../root  │
-             ◄────────────────────┤  key:     ./out/log-key.pem   │
-                                 └───────────────┬───────────────┘
-                                                 │
-                                                 ▼
+                                   │  storage: ./log               │
+   checkpoint + entry bundles      │  roots:   ./out/pki/.../root  │
+              ◄────────────────────┤  key:     ./out/log-key.pem   │
+                                   └───────────────┬───────────────┘
+                                                   │
+                                                   ▼
                     log/checkpoint  +  log/tile/data/*  +  log/tile/*
 ```
 
@@ -68,6 +68,11 @@ make lab-up
 make demo
 make walk INDEX=0
 make bundle INDEX=0
+
+# add VERBOSE=1 to trace the HTTP POST and the storage reads
+make demo VERBOSE=1
+make walk INDEX=0 VERBOSE=1
+make bundle INDEX=0 VERBOSE=1
 
 # 5. Demonstrate native witnessing (log + witness + cosignature)
 make witness-demo

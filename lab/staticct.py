@@ -28,6 +28,7 @@ fingerprints and adds the two leading bytes (version, leaf type)::
 from __future__ import annotations
 
 import json
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -36,6 +37,39 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import merkle
+
+
+def trace(message: str) -> None:
+    """Print a trace line for verbose mode (to stderr, so stdout stays clean).
+
+    Consecutive identical messages are collapsed, which keeps polling loops
+    (waiting for an entry to be sequenced) from flooding the output.
+    """
+    global _last_trace
+    if message == _last_trace:
+        return
+    _last_trace = message
+    print(f"\033[2m[ct] {message}\033[0m", file=sys.stderr)
+
+
+_last_trace: Optional[str] = None
+
+
+def _abbreviate(value: str, keep: int = 48) -> str:
+    if len(value) <= keep * 2:
+        return value
+    return f"{value[:keep]}...{value[-keep // 2:]} ({len(value)} chars)"
+
+
+def summarize_payload(payload: dict) -> str:
+    """Pretty-print a request payload, abbreviating long base64 blobs."""
+    summary = {}
+    for key, value in payload.items():
+        if isinstance(value, list):
+            summary[key] = [_abbreviate(item) if isinstance(item, str) else item for item in value]
+        else:
+            summary[key] = value
+    return json.dumps(summary, indent=2)
 
 ENTRY_BUNDLE_WIDTH = 256
 
@@ -159,40 +193,61 @@ def format_n(index: int) -> str:
     return f"x{(index // 1000) % 1000:03d}/{index % 1000:03d}"
 
 
-def read_entry_bundles(storage_dir: str) -> List[Entry]:
+def read_entry_bundles(storage_dir: str, verbose: bool = False) -> List[Entry]:
     """Read every entry bundle under ``<storage_dir>/tile/data`` in order."""
     base = Path(storage_dir) / "tile" / "data"
     entries: List[Entry] = []
     if not base.is_dir():
+        if verbose:
+            trace(f"no entry bundles at {base}")
         return entries
     for path in sorted(base.iterdir()):
+        data = None
         if path.is_file():
-            entries.extend(parse_entry_bundle(path.read_bytes()))
+            data = path.read_bytes()
         elif path.is_dir() and path.name.endswith(".p"):
             widths = sorted(int(p.name) for p in path.iterdir() if p.name.isdigit())
             if widths:
-                entries.extend(parse_entry_bundle((path / str(widths[-1])).read_bytes()))
+                data = (path / str(widths[-1])).read_bytes()
+        if data is None:
+            continue
+        parsed = parse_entry_bundle(data)
+        if verbose:
+            trace(f"read entry bundle {path} ({len(data)} bytes) -> {len(parsed)} entry(ies)")
+        entries.extend(parsed)
     return entries
 
 
 class StaticCTClient:
     """Talk to a local TesseraCT POSIX log."""
 
-    def __init__(self, base_url: str, storage_dir: Optional[str] = None):
+    def __init__(self, base_url: str, storage_dir: Optional[str] = None, verbose: bool = False):
         self.base_url = base_url.rstrip("/")
         self.storage_dir = storage_dir
+        self.verbose = verbose
 
     # -- submission ---------------------------------------------------------
     def _post(self, path: str, payload: dict) -> dict:
         body = json.dumps(payload).encode()
+        url = self.base_url + path
+        if self.verbose:
+            trace(f"POST {url}")
+            trace("Content-Type: application/json")
+            trace(f"body ({len(body)} bytes):\n{summarize_payload(payload)}")
         request = urllib.request.Request(
-            self.base_url + path, data=body, headers={"Content-Type": "application/json"}
+            url, data=body, headers={"Content-Type": "application/json"}
         )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
-                return json.loads(response.read())
+                raw = response.read()
+                if self.verbose:
+                    trace(f"<- {response.status} {response.reason} ({len(raw)} bytes)")
+                    trace(f"response:\n{json.dumps(json.loads(raw), indent=2)}")
+                return json.loads(raw)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")
+            if self.verbose:
+                trace(f"<- HTTP {exc.code}: {detail}")
             raise RuntimeError(f"{path} failed: HTTP {exc.code}: {detail}") from exc
 
     def add_chain(self, chain_der: List[bytes]) -> dict:
@@ -206,8 +261,14 @@ class StaticCTClient:
         """Fetch the roots the log is willing to accept."""
         import base64
 
-        with urllib.request.urlopen(self.base_url + "/ct/v1/get-roots", timeout=30) as response:
-            data = json.loads(response.read())
+        url = self.base_url + "/ct/v1/get-roots"
+        if self.verbose:
+            trace(f"GET {url}")
+        with urllib.request.urlopen(url, timeout=30) as response:
+            raw = response.read()
+            if self.verbose:
+                trace(f"<- {response.status} {response.reason} ({len(raw)} bytes)")
+            data = json.loads(raw)
         return [base64.b64decode(cert) for cert in data["certificates"]]
 
     # -- monitoring ---------------------------------------------------------
@@ -215,13 +276,17 @@ class StaticCTClient:
         """Read the raw signed checkpoint from storage."""
         if not self.storage_dir:
             raise ValueError("storage_dir is required to read the checkpoint")
-        return (Path(self.storage_dir) / "checkpoint").read_bytes()
+        path = Path(self.storage_dir) / "checkpoint"
+        data = path.read_bytes()
+        if self.verbose:
+            trace(f"read checkpoint {path} ({len(data)} bytes)")
+        return data
 
     def entries(self) -> List[Entry]:
         """Read all logged entries from the entry bundles."""
         if not self.storage_dir:
             raise ValueError("storage_dir is required to read entries")
-        return read_entry_bundles(self.storage_dir)
+        return read_entry_bundles(self.storage_dir, verbose=self.verbose)
 
     def leaf_hashes(self) -> List[bytes]:
         return [entry.leaf_hash() for entry in self.entries()]

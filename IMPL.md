@@ -274,7 +274,25 @@ python3 -m lab.cli measure   --generate
 python3 -m lab.cli demo      --storage-dir log --log-key out/log-key.pem
 ```
 
-### 2.6 Tests
+### 2.6 Verbose tracing — seeing the HTTP and the storage
+
+Every command accepts `-v`/`--verbose` (the Makefile passes it with `VERBOSE=1`). In verbose
+mode the client writes a trace to **stderr** (so stdout stays parseable) showing exactly what
+happens on the wire and on disk:
+
+* the `POST` URL, the `Content-Type`, and the JSON body with long base64 blobs abbreviated;
+* the HTTP status and the full SCT response JSON;
+* each entry bundle read (`log/tile/data/...`, its size, and how many entries it contained);
+* each checkpoint read, and for `walk`/`bundle` the parsed entry fields and the raw checkpoint.
+
+This is the clearest way to see that submission is *JSON over HTTP* and that monitoring is
+*reading files*. For example, `make demo VERBOSE=1` prints the two-element `chain` array (leaf
+and issuer, base64), then the SCT with its `id`, `timestamp`, `extensions`, and `signature`.
+
+Consecutive identical trace lines are collapsed, so the polling loop that waits for an entry to
+be sequenced does not flood the terminal.
+
+### 2.7 Tests
 
 ```bash
 make test        # python3 -m unittest discover -s tests -v

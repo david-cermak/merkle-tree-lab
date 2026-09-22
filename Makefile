@@ -13,6 +13,7 @@ ORIGIN      ?= example.com/workshop
 HTTP_ADDR   ?= 127.0.0.1:6962
 ROOTS_PEM   ?= out/pki/mldsa65/root.crt
 LOG_KEY     ?= out/log-key.pem
+VERBOSE     ?=
 
 .DEFAULT_GOAL := help
 .PHONY: help submodules build-tesseract build-witness lab-up lab-down pki pki-all tls-demo measure demo walk bundle witness-setup witness-demo workshop test lint clean
@@ -47,14 +48,14 @@ tls-demo: ## Run the private-PQC-PKI TLS demo (ALG=mldsa65)
 measure: ## Measure certificate/key/signature sizes (generates missing PKIs)
 	$(PYTHON) -m lab.cli measure --generate
 
-demo: ## Submit a certificate and verify its inclusion proof (needs lab-up)
-	$(PYTHON) -m lab.cli demo --storage-dir $(STORAGE_DIR) --log-key $(LOG_KEY)
+demo: ## Submit a certificate and verify its inclusion proof (needs lab-up; VERBOSE=1 traces HTTP)
+	$(PYTHON) -m lab.cli demo $(if $(VERBOSE),--verbose,) --storage-dir $(STORAGE_DIR) --log-key $(LOG_KEY)
 
-walk: ## Print an inclusion proof hash-by-hash (needs lab-up)
-	$(PYTHON) -m lab.cli walk --storage-dir $(STORAGE_DIR) --index $(or $(INDEX),0)
+walk: ## Print an inclusion proof hash-by-hash (needs lab-up; VERBOSE=1 shows entry bytes)
+	$(PYTHON) -m lab.cli walk $(if $(VERBOSE),--verbose,) --storage-dir $(STORAGE_DIR) --index $(or $(INDEX),0)
 
-bundle: ## Build and size an MTC-shaped bundle (needs lab-up)
-	$(PYTHON) -m lab.cli bundle --storage-dir $(STORAGE_DIR) --index $(or $(INDEX),0) \
+bundle: ## Build and size an MTC-shaped bundle (needs lab-up; VERBOSE=1 shows the checkpoint)
+	$(PYTHON) -m lab.cli bundle $(if $(VERBOSE),--verbose,) --storage-dir $(STORAGE_DIR) --index $(or $(INDEX),0) \
 		--output out/mtc_bundle.json
 
 build-witness: ## Build the local tlog witness (requires Go 1.27)
