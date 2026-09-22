@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Merkle Certificate — Proof Without the Chain</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #1a1a20;
+      --border: #2d2d35;
+      --cert: #22c55e;
+      --proof: #3b82f6;
+      --root: #a855f7;
+      --chain: #f59e0b;
+      --text: #e4e4e7;
+      --muted: #71717a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, var(--cert), var(--root));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 1rem;
+      margin-bottom: 2rem;
+    }
+    .comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      margin-bottom: 2rem;
+      max-width: 900px;
+    }
+    @media (max-width: 700px) { .comparison { grid-template-columns: 1fr; } }
+    .column h2 {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin-bottom: 1rem;
+      font-weight: 600;
+    }
+    .column.old h2 { color: var(--chain); }
+    .column.new h2 { color: var(--cert); }
+    .block {
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 0.75rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      border: 2px solid;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .block .icon { font-size: 1.25rem; flex-shrink: 0; }
+    .block .label { font-weight: 600; }
+    .block .desc { color: var(--muted); font-size: 0.75rem; margin-top: 0.25rem; }
+    .chain-block { border-color: var(--chain); background: rgba(245, 158, 11, 0.08); }
+    .chain-block .icon { color: var(--chain); }
+    .cert-block { border-color: var(--cert); background: rgba(34, 197, 94, 0.08); }
+    .cert-block .icon { color: var(--cert); }
+    .proof-block { border-color: var(--proof); background: rgba(59, 130, 246, 0.08); }
+    .proof-block .icon { color: var(--proof); }
+    .root-block { border-color: var(--root); background: rgba(168, 85, 247, 0.08); }
+    .root-block .icon { color: var(--root); }
+    .flow {
+      max-width: 900px;
+      margin-top: 2rem;
+    }
+    .flow h2 {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin-bottom: 1rem;
+      font-weight: 600;
+    }
+    .flow-steps {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .step-num {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--proof);
+      color: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .arrow {
+      color: var(--muted);
+      font-size: 1.25rem;
+    }
+    .tagline {
+      margin-top: 2rem;
+      padding: 1.25rem;
+      background: linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(168, 85, 247, 0.15));
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      font-size: 1rem;
+      max-width: 600px;
+    }
+    .tagline strong { color: var(--cert); }
+  </style>
+</head>
+<body>
+  <h1>Merkle Certificate</h1>
+  <p class="subtitle">Proof of inclusion without the chain</p>
+
+  <div class="comparison">
+    <div class="column old">
+      <h2>Traditional PKI</h2>
+      <div class="block chain-block">
+        <span class="icon">📜</span>
+        <div>
+          <span class="label">Certificate</span>
+          <div class="desc">Your cert</div>
+        </div>
+      </div>
+      <div class="block chain-block">
+        <span class="icon">🔗</span>
+        <div>
+          <span class="label">Intermediate CA</span>
+          <div class="desc">Chain link 1</div>
+        </div>
+      </div>
+      <div class="block chain-block">
+        <span class="icon">🔗</span>
+        <div>
+          <span class="label">Root CA</span>
+          <div class="desc">Chain link 2</div>
+        </div>
+      </div>
+      <p style="color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem;">Multiple certs, chain of trust</p>
+    </div>
+    <div class="column new">
+      <h2>Merkle / CT-style</h2>
+      <div class="block cert-block">
+        <span class="icon">📜</span>
+        <div>
+          <span class="label">Certificate</span>
+          <div class="desc">Your cert (leaf)</div>
+        </div>
+      </div>
+      <div class="block proof-block">
+        <span class="icon">🌳</span>
+        <div>
+          <span class="label">Merkle proof</span>
+          <div class="desc">Audit path: sibling hashes up to root</div>
+        </div>
+      </div>
+      <div class="block root-block">
+        <span class="icon">✓</span>
+        <div>
+          <span class="label">Signed tree root</span>
+          <div class="desc">Log’s commitment (tree size, root hash)</div>
+        </div>
+      </div>
+      <p style="color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem;">Three pieces. No chain.</p>
+    </div>
+  </div>
+
+  <div class="flow">
+    <h2>How it works</h2>
+    <div class="flow-steps">
+      <div class="step"><span class="step-num">1</span> Submit cert to log</div>
+      <span class="arrow">→</span>
+      <div class="step"><span class="step-num">2</span> Log sequences into Merkle tree</div>
+      <span class="arrow">→</span>
+      <div class="step"><span class="step-num">3</span> Fetch proof + signed root</div>
+      <span class="arrow">→</span>
+      <div class="step"><span class="step-num">4</span> Verify: hash(cert) + proof → root</div>
+    </div>
+  </div>
+
+  <div class="tagline">
+    <strong>Certificate Transparency</strong> and similar systems use this model: the log is append-only, anyone can verify inclusion, and you only need <strong>cert + proof + root</strong>—no CA chain.
+  </div>
+</body>
+</html>
