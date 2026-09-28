@@ -1,10 +1,10 @@
-"""The three certificate shapes, and what a client needs to check each (Section 6).
+"""The four certificate shapes, and what a client needs to check each (Section 6).
 
-Everything else in this package exists to produce one of these. Section 6.1
-covers a certificate with a conventional signature; Section 6.3 gives it a
-proof and two cosignatures instead; Section 6.4 removes the signatures by
-pointing at a hash the client already has. The workshop compares all three, so
-this module builds all three and :func:`shape_sizes` measures them.
+Everything else in this package exists to produce one of these. Section 6.2
+defines the certificate format; Section 6.3 gives it a proof and two
+cosignatures instead; Section 6.4 removes the signatures by pointing at a hash
+the client already has. The workshop compares all four, so this module builds
+all four and :func:`shape_sizes` measures them.
 
 The shapes differ in exactly two places, and both are visible in the structures
 below.
@@ -24,7 +24,7 @@ largest thing in a certificate, so removing them is where the size win comes
 from.
 
 One consequence is worth naming, because it decides the structure above. In
-Section 6.1 the ``MTCProof`` sits *inside* the signed body, so
+Section 6.2 the ``MTCProof`` sits *inside* the signed body, so
 :meth:`MerkleTreeCertificate.tbs_encoded_for_signing` includes it. A client
 therefore cannot drop the proof to save space: the cosignature covers it, so
 removing it invalidates the certificate. Exercise 03 walks through that.
@@ -43,7 +43,7 @@ from .landmarks import Landmark
 from .log import IssuanceLog, encode_extensions, parse_extensions
 from .tree import covering_subtree, is_valid_subtree
 
-#: Proof forms. These name the ASN.1 CHOICE alternatives in Section 6.1.
+#: Proof forms. These name the ASN.1 CHOICE alternatives in Section 6.2.
 CHECKPOINT_RELATIVE = "checkpoint_relative"
 LANDMARK_RELATIVE = "landmark_relative"
 
@@ -68,7 +68,7 @@ C_SIGNATURE_ALGORITHM = 11
 
 @dataclass(frozen=True)
 class MTCProof:
-    """The proof carried by every Merkle Tree Certificate (Section 6.1).
+    """The proof carried by every Merkle Tree Certificate (Section 6.2).
 
     The interval is the *subtree* the proof is about, not the log: for a
     tree-relative certificate it is the whole tree ``[0, N)``, and for a
@@ -138,7 +138,7 @@ class MTCProof:
         return self.subtree_start, self.subtree_end
 
     def encoded(self) -> bytes:
-        """Encode as ``MTCProof``, following the CHOICE in Section 6.1.
+        """Encode as ``MTCProof``, following the CHOICE in Section 6.2.
 
         A leading tag byte distinguishes the two forms so a decoder never has
         to guess, then the landmark number in the landmark-relative case, then
@@ -146,7 +146,7 @@ class MTCProof:
 
         Each cosignature is encoded in full, cosigner ID and all. Dropping the
         ID would leave a signature a client cannot attribute to anybody, which
-        is the one thing the ``Signatures`` vector of Section 6.1 exists to
+        is the one thing the ``Signatures`` vector of Section 6.2 exists to
         prevent.
         """
         shared = wire.uint(self.log_number, 2) + wire.uint(self.entry_index, 6)
@@ -168,7 +168,7 @@ class MTCProof:
         """Read a proof back, choosing the form from its leading tag.
 
         The tag is what stops a decoder from guessing between the two forms of
-        the Section 6.1 CHOICE. Each cosignature is decoded through
+        the Section 6.2 CHOICE. Each cosignature is decoded through
         :meth:`SubtreeSignature.decode`, so a cosigner ID comes back with it,
         and the count is checked against the form: the draft requires cosignatures
         on a checkpoint-relative proof and none at all on a landmark-relative
@@ -214,7 +214,7 @@ class MTCProof:
     def decode_for_log(cls, data: bytes, log_id: TrustAnchorID) -> "MTCProof":
         """Decode a proof against the log the caller already knows it is from.
 
-        Section 6.1 puts ``log_number`` in the proof, not the full log ID: a
+        Section 6.2 puts ``log_number`` in the proof, not the full log ID: a
         client reading a certificate has already decided which log it is asking
         about, and the two have to agree. ``__post_init__`` is what checks that,
         so passing the wrong log here fails loudly instead of producing a proof
@@ -310,7 +310,7 @@ def _read_hashes(reader: wire.Reader) -> Tuple[bytes, ...]:
 
 
 def _read_cosignatures(reader: wire.Reader) -> List[SubtreeSignature]:
-    """Decode the ``Signatures`` vector of Section 6.1.
+    """Decode the ``Signatures`` vector of Section 6.2.
 
     Split out because the vector holds elements that are not ``opaque``, and
     :mod:`lab.mtc.wire` should not have to know what a cosignature is. Each
@@ -439,14 +439,14 @@ class MerkleTreeCertificate:
         """Read a certificate back out of the bytes a cosigner signed.
 
         The proof is a tail with no length prefix -- it is the last field, and
-        Section 6.1 puts the cosignatures inside it -- so the body is read from
+        Section 6.2 puts the cosignatures inside it -- so the body is read from
         its own length prefix and the proof is whatever follows. Getting that
         boundary wrong would move one byte between the two, and the entry
         reconstruction would then fail on a hash rather than on a parse.
 
         ``log_id`` is the log this certificate is about. It is not in the
         certificate's bytes: the serial encodes ``(log_number, index)`` and
-        Section 6.1 puts only the log *number* in the proof. A client knows
+        Section 6.2 puts only the log *number* in the proof. A client knows
         which log it is asking about, so it supplies the ID. When it is omitted
         the ID is rebuilt from the issuer and the proof's log number, which is
         the reconstruction a CA-side reader would do.

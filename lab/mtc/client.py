@@ -242,7 +242,7 @@ def reconstruct_entry(cert: MerkleTreeCertificate) -> MTCLogEntry:
     absent from the certificate, and that is the rule rather than an oversight:
     an entry's field is present exactly when the certificate's is. The SANs come
     from the certificate's own extensions -- *not* from the proof's, which carry
-    the log entry's extension list, a different thing (Section 6.1).
+    the log entry's extension list, a different thing (Section 6.2).
     """
     tbs = TbsCertificateLogEntry(
         issuer=cert.issuer,

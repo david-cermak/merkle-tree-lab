@@ -598,7 +598,7 @@ class TestDecoding(MTCFixture):
         """Each cosignature is decoded in full, cosigner ID included.
 
         Dropping the ID would leave a signature nobody can attribute, which is
-        the one thing the Signatures vector of Section 6.1 exists to prevent.
+        the one thing the Signatures vector of Section 6.2 exists to prevent.
         """
         proof = self.tree_relative().mtc_proof
         decoded = MTCProof.decode_for_log(proof.encoded(), self.log.log_id)

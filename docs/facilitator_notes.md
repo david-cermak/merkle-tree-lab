@@ -95,8 +95,9 @@ different reason.
 
 * **Sizes:** ML-DSA ≈ 4–5.6 KB, SLH-DSA ≈ 8 KB per certificate. The CA signature
   is the dominant cost for SLH-DSA; ML-DSA splits it between key and signature.
-* **The storage argument:** an ML-DSA-65 CT log entry is ~7 600 B; the MTC entry
-  is 131 B, because it stores a *hash* of the key and no signature. ~58×.
+* **The storage argument:** an ML-DSA-65 certificate is ~5 600 B on the wire
+  (DER; `ls -l` shows the larger PEM file); the MTC entry is 131 B, because it
+  stores a *hash* of the key and no signature. ~43×.
 * **Private PKI:** if you control both ends, ordinary PQC X.509 over TLS works
   today. You may not need MTC at all.
 * **CT is not PQC:** CT is a transparency mechanism; it can log PQC certificates

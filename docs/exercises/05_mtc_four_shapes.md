@@ -185,7 +185,7 @@ There is no negotiation in this lab (see the plan's D5), so argue it out.
 1. The draft's §8 describes a CA and client *negotiating* which shape to use.
    What would you negotiate on? Bandwidth, latency, or what the client can
    verify cheaply?
-2. A landmark expires (§6.4). §6.4.1 says a CA **SHOULD** set a landmark's
+2. A landmark expires (§6.4.1). §6.4.1 says a CA **SHOULD** set a landmark's
    expiry to *the current time plus the CA's maximum certificate lifetime*. Work
    out what that guarantees: can a landmark ever expire while a certificate it
    covers is still valid? And what does it let a client do with the hash
@@ -194,7 +194,7 @@ There is no negotiation in this lab (see the plan's D5), so argue it out.
    availability, not integrity". Give an example of a landmark-sequence mistake
    that would hurt availability but not let a bad certificate through.
 4. The checkpoint-relative shape exists because the CA signs the subtrees
-   covering *new* entries each time it checkpoints (§6.1). So one cosignature
+   covering *new* entries each time it checkpoints (§6.3). So one cosignature
    pair covers many certificates. Estimate: for a log adding 1 000 entries per
    checkpoint, how many cosignature bytes per entry, amortised? (Two covering
    subtrees, two cosigners each, 2 420 B per signature.)
@@ -229,11 +229,26 @@ simplified, per the plan's D7:
   `(log << 48) | index` serial layout, and the `0x00`/`0x01` hash domains are
   faithful to the draft.
 * The draft actually uses two encodings. `CosignedMessage` (§5.3.1) and
-  `MTCProof` (§6.1) are TLS presentation language, and the lab implements the
-  primitives they are built from faithfully — so a cosignature here is a real
-  signature over a real, draft-shaped message. The log entry and the certificate
-  around it are ASN.1/DER in the draft; those are a compact documented TLV here,
-  which is why nothing here interoperates with a real MTC implementation.
+  `MTCProof` (§6.2) are TLS presentation language. The lab's cosignature is a
+  faithful `CosignedMessage` — the `"subtree/v1\n\0"` label, the cosigner name,
+  a zero timestamp, the log origin, `start`/`end`, and the subtree hash — and
+  the signature is a real signature over it.
+* The `MTCProof` around it is **not** faithful. The draft's structure holds only
+  the entry extensions, `uint48 start`, `uint48 end`, the inclusion proof, and
+  the signatures; the lab's adds a form tag, a landmark number, a `log_number`,
+  an `entry_index`, and 4-byte `start`/`end`. In particular the draft has no
+  landmark field and no CHOICE: a landmark-relative certificate is simply one
+  with an empty signature list whose subtree matches a trusted subtree
+  (§7.2 step 11), whereas the lab records which landmark it is. So nothing here
+  interoperates with a real MTC implementation.
+* **Four shapes, not three.** The draft defines a directly-signed certificate
+  (§2.1), standalone certificates (§6.3), and landmark-relative certificates
+  (§6.4). The lab splits the standalone profile into **checkpoint-relative** —
+  the draft's own construction: a proof to the covering subtree a checkpoint
+  signed (§6.3 step 2) — and **tree-relative**, a proof to the whole tree
+  `[0, N)` with cosignatures. The latter is still a legal §6.2 certificate
+  (`[0, N)` is a valid subtree), but §6.3 does not describe it; it is here so
+  the proof size can be seen to grow with the subtree.
 * `TBSCertificateLogEntry` is that TLV structure rather than DER. The leaf
   hashes are real SHA-256 over the real bytes, so the tree arithmetic is exact
   — only the byte layout is ours.

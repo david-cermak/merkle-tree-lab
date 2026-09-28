@@ -29,17 +29,17 @@ openssl x509 -in out/pki/mldsa65/leaf.crt -noout -text | head -20
    many bytes is that?
 5. With Certificate Transparency, a client typically gets **two SCTs** plus the
    certificate's own signature. At ML-DSA-44 sizes, how many signature bytes is
-   that? The draft's cost analysis (§10.1, "Operational Costs") does this
-   arithmetic for a real deployment and arrives at **7 260 B**. Now do the same
-   arithmetic for a *landmark-relative Merkle Tree Certificate* in the same
-   deployment, which the draft puts at **736 B** with **no signatures at
+   that? The draft's introduction (§1) does this arithmetic for a real
+   deployment and arrives at **7 260 B**. Now do the same arithmetic for a
+   *landmark-relative Merkle Tree Certificate* in the same deployment, which the
+   draft's size estimates (§6.5) put at **736 B** with **no signatures at
    all**. Where does 736 come from, and what is the client giving up to get it?
    (Run `make mtc-lab` and `make mtc-shapes` in
    [exercise 5](05_mtc_four_shapes.md) and compare the *proof* bytes in the
    table against the signature bytes.)
-6. Add a second axis: §10.1 assumes a **7-day** certificate lifetime renewed
-   at 75% of the way through, so each certificate is reissued every **126
-   hours**. How many signature bytes does one client fetch per year per
+6. Add a second axis: §6.5 assumes a **7-day** certificate lifetime renewed
+   at 75% of the way through (§10.4), so each certificate is reissued every
+   **126 hours**. How many signature bytes does one client fetch per year per
    certificate, at ML-DSA-44 and at ML-DSA-65 sizes? This is the pressure that
    motivates a design where the log stores a hash of the key instead of the key.
 

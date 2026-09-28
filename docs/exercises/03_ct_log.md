@@ -66,14 +66,15 @@ ls -l out/pki/mldsa65/leaf.crt
 make mtc-lab
 ```
 
-An ML-DSA-65 leaf certificate is about **7 600 bytes**, almost all of it the
-1 974-byte public key plus the 3 309-byte signature — and a CT log stores
-something that size, per certificate, forever. The MTC issuance log stores
-**131 bytes** for the same certificate, because the entry holds a 32-byte hash
-of the key instead of the key, and no signature at all. `make mtc-lab` prints
-both numbers.
+An ML-DSA-65 leaf certificate is about **5 600 bytes** on the wire (DER),
+almost all of it the 1 974-byte public key plus the 3 309-byte signature — and a
+CT log stores something that size, per certificate, forever. (The `ls -l` output
+is larger because `.crt` files are PEM, i.e. base64; the DER size is the one in
+`out/measurements.md`.) The MTC issuance log stores **131 bytes** for the same
+certificate, because the entry holds a 32-byte hash of the key instead of the
+key, and no signature at all. `make mtc-lab` prints both numbers.
 
-That ratio — 7 600 bytes down to 131, about **58×** — is the storage argument
+That ratio — 5 600 bytes down to 131, about **43×** — is the storage argument
 for Merkle Tree Certificates, and it is the number to remember from this
 exercise. The price is that the client now has to get the key from somewhere
 else: from the certificate itself, and proof that the certificate matches the

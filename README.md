@@ -148,7 +148,7 @@ The measured table, which is the point of the whole workshop:
 Note that the cosigned MTC shapes are **larger** than the traditionally signed
 one. MTC is not a way to shrink certificates; it is a way to make log membership
 checkable without downloading the log. The storage win is in the log entry,
-which is 131 bytes instead of the ~7 600 bytes a CT log would store.
+which is 131 bytes instead of the ~5 600 bytes (DER) a CT log would store.
 
 Run `make help` to see all targets, or `make workshop` for the whole happy path
 (which is also the smoke test).

@@ -67,7 +67,7 @@ def _state_for(scenario: Scenario, knows: str) -> mtc_client.ClientState:
 def _checkpoint_size_for(scenario: Scenario, index: int, explicit: Optional[int]) -> int:
     """Choose which checkpoint the checkpoint-relative shape is measured against.
 
-    Section 6.1 has the CA run the job when it checkpoints, and sign the
+    Section 6.3 has the CA run the job when it checkpoints, and sign the
     subtrees covering the entries added since the *previous* checkpoint. The
     certificate for an entry is therefore built against the oldest checkpoint
     that already contains it -- for index 3 in this scenario, the size-12
