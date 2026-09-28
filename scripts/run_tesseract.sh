@@ -10,8 +10,6 @@
 #   HTTP_ADDR     submission endpoint           (default 127.0.0.1:6962)
 #   ROOTS_PEM     accepted roots PEM            (default out/pki/mldsa65/root.crt)
 #   LOG_KEY       ECDSA checkpoint signing key  (default out/log-key.pem)
-#   ADDITIONAL_SIGNER  optional Ed25519 note signer for the log (witnessing)
-#   WITNESS_POLICY     optional witness policy file (enables witnessing)
 #   GOTOOLCHAIN   Go toolchain                  (default go1.27.0)
 set -euo pipefail
 
@@ -26,6 +24,21 @@ ROOTS_PEM="${ROOTS_PEM:-out/pki/mldsa65/root.crt}"
 LOG_KEY="${LOG_KEY:-out/log-key.pem}"
 PID_FILE="$STORAGE_DIR/tesseract.pid"
 LOG_FILE="$STORAGE_DIR/tesseract.log"
+
+# The submission prefix of an origin is $HOST/$PATH_PREFIX, and per the
+# static-ct-api the origin line must be exactly that prefix. TesseraCT only
+# learns the path half of it from its own configuration, so the path half of
+# ORIGIN has to be handed back to it as --path_prefix. "example.com/workshop"
+# becomes "--path_prefix=/workshop", so that a submission is received at
+# /workshop/ct/v1/add-chain and the endpoint the server reconstructs,
+# $HOST$PATH, starts with the origin it was told about.
+ORIGIN_PATH="${ORIGIN#*/}"
+if [[ "$ORIGIN_PATH" == "$ORIGIN" ]]; then
+  PATH_PREFIX=""
+else
+  PATH_PREFIX="/${ORIGIN_PATH#/}"
+  PATH_PREFIX="${PATH_PREFIX%/}"
+fi
 
 build_if_needed() {
   if [[ ! -x "$BIN" ]]; then
@@ -45,7 +58,7 @@ ensure_log_key() {
 ensure_roots() {
   if [[ ! -f "$ROOTS_PEM" ]]; then
     echo "Roots not found ($ROOTS_PEM); generating the mldsa65 PKI ..."
-    python3 -m lab.cli pki --algorithm mldsa65
+    "${PYTHON:-python3}" -m lab.cli pki --algorithm mldsa65
   fi
 }
 
@@ -59,25 +72,19 @@ start() {
   ensure_roots
   mkdir -p "$STORAGE_DIR"
 
-  extra_args=()
-  if [[ -n "${ADDITIONAL_SIGNER:-}" ]]; then
-    extra_args+=(--additional_signer="$ADDITIONAL_SIGNER")
-  fi
-  if [[ -n "${WITNESS_POLICY:-}" ]]; then
-    extra_args+=(--witness_policy_file="$WITNESS_POLICY")
-  fi
-
   export GOMEMLIMIT="${GOMEMLIMIT:-2GiB}"
+  prefix_args=()
+  [[ -n "$PATH_PREFIX" ]] && prefix_args=(--path_prefix="$PATH_PREFIX")
   nohup "$BIN" \
     --http_endpoint="$HTTP_ADDR" \
     --storage_dir="$STORAGE_DIR" \
     --origin="$ORIGIN" \
+    "${prefix_args[@]}" \
     --private_key="$LOG_KEY" \
     --roots_pem_file="$ROOTS_PEM" \
     --checkpoint_interval="${CHECKPOINT_INTERVAL:-1s}" \
     --enable_publication_awaiter=false \
     --slog_level="${SLOG_LEVEL:-1}" \
-    "${extra_args[@]}" \
     >"$LOG_FILE" 2>&1 &
   echo $! >"$PID_FILE"
 
@@ -93,6 +100,7 @@ start() {
   fi
   echo "TesseraCT running on http://$HTTP_ADDR"
   echo "  origin : $ORIGIN"
+  echo "  prefix : ${PATH_PREFIX:-<none>}  (submit to http://$HTTP_ADDR${PATH_PREFIX}/ct/v1/...)"
   echo "  storage: $STORAGE_DIR"
   echo "  pid    : $(cat "$PID_FILE")"
 }

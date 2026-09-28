@@ -12,9 +12,8 @@ The lab has these implemented workstreams:
 | **WS2** | Python static-ct client | `lab/merkle.py`, `lab/certs.py`, `lab/note.py`, `lab/staticct.py`, `lab/cli/` |
 | **WS3** | PQC PKI & size measurement | `lab/pki.py`, `lab/measure.py`, `scripts/openssl/*`, `scripts/tls_demo.sh` |
 | **WS4** | CT log lab | `scripts/run_tesseract.sh`, `lab.cli demo`, `scripts/workshop.sh` |
-| **WS5** | Merkle proof walkthrough | `lab/merkle.py` `explain_inclusion`, `lab.cli walk`, `docs/exercises/05_*` |
-| **WS6** | Checkpoints & witnesses | `lab/note.py` `verify_cosignature`, `tools/witness/`, `scripts/witness_demo.sh` |
-| **WS7** | MTC-shaped bundle | `lab/bundle.py`, `lab.cli bundle` |
+| **WS5** | Merkle proof walkthrough | `lab/merkle.py` `explain_inclusion`, `lab.cli walk`, `docs/exercises/04_*` |
+| **WS6** | **Merkle Tree Certificates** | `lab/mtc/` (tree, wire, ids, log, cosigners, landmarks, certs, client, scenario), `lab/cli/mtc.py` |
 | **WS9** | Workshop materials | `docs/facilitator_notes.md`, `docs/exercises/`, `abstract.md` |
 | **WS10** | Verification & CI | `tests/`, `.github/workflows/ci.yml`, `scripts/workshop.sh` |
 
@@ -231,6 +230,15 @@ Submission uses HTTP:
 client.add_chain([leaf_der, intermediate_der])   # POST /ct/v1/add-chain
 ```
 
+A log's **origin is its submission prefix**, per the static-ct-api: the origin line must be
+`$HOST/$PATH_PREFIX`, the schema-less URL that submissions arrive on. The client therefore
+takes the origin and splits it two ways — the host goes into the `Host` header and the path
+goes in front of `/ct/v1/...` — while still connecting to `127.0.0.1`. The server has to agree
+on the path half via its `--path_prefix` flag; `scripts/run_tesseract.sh` derives that flag
+from its own `ORIGIN` so the two ends cannot drift. This matters because TesseraCT reconstructs
+the endpoint as `$HOST$PATH` and warns on every submission that does not start with its origin.
+Ignoring the origin is why the lab used to log a warning per request.
+
 Monitoring reads files. Each `tile/data/...` **entry bundle** holds up to 256 entries. The
 bytes for one x509 entry are:
 
@@ -283,7 +291,7 @@ happens on the wire and on disk:
 * the `POST` URL, the `Content-Type`, and the JSON body with long base64 blobs abbreviated;
 * the HTTP status and the full SCT response JSON;
 * each entry bundle read (`log/tile/data/...`, its size, and how many entries it contained);
-* each checkpoint read, and for `walk`/`bundle` the parsed entry fields and the raw checkpoint.
+* each checkpoint read, and for `walk` the parsed entry fields and the raw checkpoint.
 
 This is the clearest way to see that submission is *JSON over HTTP* and that monitoring is
 *reading files*. For example, `make demo VERBOSE=1` prints the two-element `chain` array (leaf
@@ -444,9 +452,18 @@ a good demonstration that the log is a set, not a stream.
 
 ### 4.3 The whole path — `make workshop`
 
-`scripts/workshop.sh` chains the smoke test: measure, `lab-up`, `demo`, `walk`, `checkpoint`
-verification, `bundle`, then `lab-down` (via a trap). If this completes, the environment is
-healthy.
+`scripts/workshop.sh` chains the smoke test in nine steps: measure, `lab-up`, `demo`, `walk`,
+`checkpoint` verification, `lab-down` (via a trap), then the three MTC commands. The first six
+prove the CT half works end to end; the last three prove the MTC half does.
+
+Because the MTC half needs no log server, it can be run on its own from a clean
+checkout — no Go, no OpenSSL, no network:
+
+```bash
+make mtc-lab && make mtc-shapes
+```
+
+That is the section to protect if a workshop room has one broken machine.
 
 ---
 
@@ -471,128 +488,218 @@ with the checkpoint root (`MATCH: True`). The companion worksheet is
 
 ---
 
-## WS6 — Checkpoints, witnesses, and cosignatures
+## WS6 — Merkle Tree Certificates: the simulator
 
-### 6.1 The problem
+This is the centrepiece, and it has no relationship to the CT log above. It
+re-implements draft `draft-ietf-plants-merkle-tree-certs-06` in
+`lab/mtc/`, offline, with real ML-DSA signatures.
 
-A log can publish two different checkpoints of the same size (a *split view*). An inclusion
-proof only shows a certificate is in *some* tree; it does not pin *which* tree. A **witness**
-fixes this by independently checking append-only behaviour and cosigning the checkpoint.
+The module reads in the order the workshop uses it.
 
-### 6.2 The local witness — `tools/witness/`
+### 6.1 `tree.py` — Section 4, and the reason to trust the rest
 
-TesseraCT has native witnessing support (`--witness_policy_file`, `--additional_signer`), but it
-needs a witness endpoint. The public witness network requires registering your log key, so for an
-offline workshop we ship a minimal witness server:
+Subtree hashes, inclusion proofs, consistency proofs, and `is_valid_subtree`.
+This is the only file in the lab that is validated against something external:
+`tests/test_mtc_tree.py` runs the accumulated vectors in the draft's
+Appendix C, plus Figure 7/8 cases and every valid subtree interval up to a
+tree of 130 entries.
+
+Two rules are worth reading the code for:
+
+* `is_valid_subtree(start, end)` is `start % BIT_CEIL(end - start) == 0`
+  (§4.1). The condition looks arbitrary until you know it exists so that
+  consistency proofs can separate a subtree from its surroundings.
+* `find_subtrees(start, end)` returns the *two* subtrees covering an
+  interval (§4.5), which is what a landmark's subtrees and the CA's
+  per-checkpoint signatures are both built from.
+
+If this file is wrong, every printed hash after it is wrong, so it is tested
+against the draft's own numbers rather than against itself.
+
+### 6.2 `wire.py` and `ids.py` — encoding and names
+
+A small TLS presentation-language subset: length-prefixed vectors with the
+draft's `0x40`-prefixed long form, and a strict reader that rejects reserved
+prefixes and trailing bytes. `ids.py` allocates the sub-arcs of §5.1 and
+derives both the dotted form and the packed form of an OID.
+
+`vector()` takes an iterable of elements, except for `bytes`, which is treated
+as a *single* element. That exception looks like a wart and is the reason
+`wire.vector(some_bytes)` does the obvious thing.
+
+### 6.3 `log.py` — the issuance log (§5.2)
+
+The core idea is in `TbsCertificateLogEntry`: it holds a **32-byte hash** of
+the subject public key, not the key, and **no signature at all**. An entry is
+119–131 bytes depending on the SAN list, against ~7 600 for a CT entry holding
+an ML-DSA-65 certificate.
+
+Also here: serial numbers (`(log << 48) | index`, §5.2), the null entry that
+reserves an index without a certificate, subjectAltName extension encoding, and
+`IssuanceLog` with its checkpoints.
+
+A checkpoint is a cosignature over `[0, N)` — the *whole* tree — with a
+timestamp, and it is the only place in the lab where a non-zero timestamp
+appears (§5.3.2). `Checkpoint.signed_by()` is timestamp-aware for exactly that
+reason.
+
+### 6.4 `cosigners.py` — the `CosignedMessage` format (§5.3)
+
+A cosigner signs a *subtree*, not a message about a certificate. What it signs
+is 12 bytes of domain separation — `"subtree/v1\n\0"` — then the log ID, the
+subtree interval, the subtree hash, and for a checkpoint a timestamp. The
+`0x00`/`0x01` hash domains of §4 keep a leaf from being read as a node.
+
+`Cosigner` wraps one ML-DSA-44 key; `ca_cosigner()` builds the CA's own, whose
+ID is the CA ID (§5.4). `sort_signatures()` puts a proof's cosignatures in
+cosigner-ID order and rejects duplicates, so a certificate has one canonical
+byte encoding.
+
+`CertificateSigner` is the ordinary ML-DSA-65 CA key used by the *directly
+signed* shape. It is a different class on purpose: an ordinary signature is over
+a message, and a cosignature is over a subtree.
+
+### 6.5 `landmarks.py` — the landmark sequence (§6.4)
+
+An append-only sequence of landmarks, each with a tree size, an expiry, and the
+**two subtrees covering what was added since the previous landmark**
+(`find_subtrees(prev, size)`). This is the detail that surprises people: a
+landmark is not a snapshot of the tree, it is a record of a delta, and the
+interval it covers is generally not itself a subtree.
+
+`publish()` produces the text form and `parse_publication()` reads it back
+strictly. `subtree_hashes_for()` produces exactly what a relying party
+stores: two 32-byte hashes per active landmark.
+
+### 6.6 `certs.py` — the four shapes (§6.2–6.4)
 
 ```
-tools/witness keygen --name NAME --out FILE   # Ed25519 note key + cosignature verifier
-tools/witness serve  --listen ADDR --signer-key FILE --log-vkey FILE
+| shape                | what stands in for a signature      |
+|----------------------|-------------------------------------|
+| directly signed      | an ML-DSA-65 signature over the body |
+| standalone           | 2 subtree cosignatures over [0, N)  |
+| checkpoint-relative  | 2 subtree cosignatures over a batch |
+| landmark-relative    | nothing; the client holds the hash  |
 ```
 
-The server wraps `github.com/transparency-dev/witness` with an in-memory store, trusts the log's
-additional signer key via `VerifierForLog`, and exposes the tlog-witness
-`POST /add-checkpoint` endpoint.
+Both cosigners sign the *same* interval. That is what the draft requires — the
+`Signatures` vector holds cosignatures over the proof's `start` and `end`, so
+the two differ in who signed, not in what they cover.
 
-### 6.3 Wiring it up
+The checkpoint-relative shape uses the covering subtree of the entries added
+since the previous checkpoint, which is why it is measured against the size-12
+checkpoint for entry 3 and not the size-20 one: the CA signs the new entries'
+subtrees when it checkpoints (§6.1, steps 2–5).
 
-`scripts/setup_witness.sh` generates, under `out/witness/`:
+`shape_sizes()` measures rather than assumes, because the direct certificate
+is signed with ML-DSA-65 (3 309 B) while the cosigners use ML-DSA-44 (2 420 B),
+and using one number for both would misstate the table.
 
-* `log-signer.key` — an Ed25519 note signer used by TesseraCT's `--additional_signer`;
-* `log-vkey.txt` — its verifier key, trusted by the witness;
-* `witness.key` / `witness-vkey.txt` — the witness key and its **CosignatureV1** verifier key;
-* `policy.txt` — a Sigsum-format witness policy.
+`issued` fields are signed, including the **issuer**. That is not decoration:
+the client selects the verifying key *by* the issuer, so an issuer outside the
+signed body would let a certificate be re-issued under another CA's name.
 
-`scripts/run_tesseract.sh` passes `--additional_signer` and `--witness_policy_file` when
-`ADDITIONAL_SIGNER` and `WITNESS_POLICY` are set. `scripts/witness_demo.sh` (and
-`make witness-demo`) runs the whole flow.
+### 6.7 `client.py` — the Section 7.2 walk
 
-After enabling witnessing, the checkpoint gains a third signature line:
+`ClientState` is what a relying party holds before any certificate arrives:
+cosigner public keys, landmark subtree hashes, and (for the directly signed
+shape) the CA key. `verify()` runs the checks in dependency order and returns
+the **first** failure with a named step, so a caller can print one line.
 
-```
-— example.com/workshop ...   (primary ECDSA, RFC6962)
-— example.com/workshop ...   (additional Ed25519 log signer)
-— witness.local ...          (witness cosignature)
-```
+The three paths differ only in where the trusted hash comes from:
 
-### 6.4 Verifying cosignatures in Python
+* cosigned shapes — recompute the subtree, check both cosignatures;
+* landmark-relative — recompute, compare against the stored hash, and check
+  that the *named* landmark actually owns that interval;
+* directly signed — check one ordinary signature.
 
-`lab/note.py` implements C2SP tlog-cosignature. The signed message is:
+`verify_direct()` is separate because that shape is not an MTC and has no
+proof to walk.
 
-```
-cosignature/v1
-time <unix seconds>
-<checkpoint note text>
-```
+### 6.8 `scenario.py` — the one fixed scenario
 
-and the signature line's base64 decodes to `keyhash(4) || timestamp(8) || ed25519 sig(64)`.
-The key hash is `SHA256(name || "\n" || 0x04 || ed25519_pubkey)` truncated to 4 bytes. The
-`checkpoint` CLI command verifies it:
+Log 8, 20 entries, a null entry at index 7, checkpoints at 12 and 20, a
+landmark at 20, a certificate for index 3. Fixed so the printed hashes are the
+same on every machine, which is what makes them discussable against a handout.
+
+It also *persists the keys*, in `out/mtc/scenario.json`. ML-DSA signatures use
+a random nonce, so a second run with fresh keys would produce different
+cosignatures for the same subtree and a certificate written by `mtc shapes`
+would not verify in `mtc verify`. The keys being saved is what makes the three
+commands a pipeline.
+
+### 6.9 The three commands — `lab/cli/mtc.py`
 
 ```bash
-python3 -m lab.cli checkpoint --storage-dir log \
-  --pubkey out/log-key.pem --witness-vkey out/witness/witness-vkey.txt
-# log signature  : VALID
-# witness cosig  : VALID (witness.local)
+make mtc-lab      # build the CA, print the roots, save the scenario
+make mtc-shapes   # cut all four shapes from one entry, size them
+make mtc-verify   # the §7.2 walk for a client with some knowledge
 ```
 
-Worksheet: `docs/exercises/06_witnesses.md`.
+`--knows` is the interesting one: `none`, `cosigners`, `landmark`, `all`. The
+`landmark` level is the only difference between the third and fourth columns
+of the knowledge table in the exercise, and the refusal message for the
+landmark-relative shape at the `cosigners` level — *"becomes checkable when the
+landmark arrives"* — is the distinction the workshop is built around.
 
----
+`--tamper` changes one subjectAltName and checks that all four shapes notice.
 
-## WS7 — The MTC-shaped bundle
+Worksheet: `docs/exercises/05_mtc_four_shapes.md`.
 
-`lab/bundle.py` assembles the pieces the lab already produces into one JSON object:
+### 6.10 What is not built
 
-```
-certificate + inclusion proof + signed checkpoint + signatures
-```
-
-`lab.cli bundle` builds it for a leaf, writes `out/mtc_bundle.json`, and reports its size against
-both a single conventional leaf certificate and a full chain:
-
-```bash
-make bundle INDEX=0
-```
-
-Representative single-certificate result (ML-DSA-65):
-
-```
-conventional leaf certificate          : 5599 bytes
-conventional chain (leaf+intermediate) : 11143 bytes
-MTC-shaped bundle (JSON, base64 cert)  : 8298 bytes
-```
-
-The bundle is **not** the MTC wire format — it is a teaching artifact. It is JSON with a base64
-certificate (~33% overhead), and for one certificate it may be larger or smaller than the chain.
-The point is the *shape* of the trade: a conventional certificate repeats a large PQ signature,
-whereas the bundle replaces it with a short audit path plus a shared, witnessed checkpoint
-signature. The exercise asks students to reason about the crossover scale.
-
-Worksheet: `docs/exercises/07_mtc_bundle.md`.
+* **The witness architecture.** The draft's separate witness design is
+  discussed, not implemented (`PLAN-update.md` D1). Cosigners are.
+* **Negotiation.** The draft's §8 negotiation is a discussion table in
+  exercise 05, not a simulation (D5).
+* **The wire format.** The draft mixes two encodings, and the lab is honest about
+  which is which. The `CosignedMessage` (§5.3.1) and the `MTCProof` (§6.1) really
+  are TLS presentation language, and `lab/mtc/wire.py` implements the handful of
+  primitives they are built from faithfully — fixed-width integers, length-prefixed
+  opaque, length-prefixed vectors. The log entry and the certificate around them are
+  ASN.1/DER in the draft, and those are a documented TLV here instead, emitted as
+  dataclasses rather than X.509. Field order, the cosignature label, the serial
+  layout, and the hash domains are faithful; the outer bytes are ours (D7). Nothing
+  here interoperates with a real MTC deployment, and every module says so.
+* **ACME.** Out of scope entirely.
 
 ---
 
 ## WS9 — Workshop materials and end-to-end flow
 
 * `README.md` — prerequisites, quickstart, repository layout, materials index.
-* `abstract.md` — updated to the TesseraCT + Python + PQC + witness story.
+* `abstract.md` — the TesseraCT + Python + PQC + MTC story.
 * `docs/facilitator_notes.md` — timing table, talking points, expected outputs, common failures,
   and what is intentionally out of scope.
-* `docs/exercises/` — six worksheets (`01`, `02`, `04`, `05`, `06`, `07`) plus an index.
+* `docs/exercises/` — six worksheets (`01`–`06`) plus an index with the old → new
+  numbering map. Exercise 05 is the MTC centrepiece and 06 is the design
+  discussion.
 * `scripts/workshop.sh` — the single end-to-end command (`make workshop`), also used as the
   smoke test.
 
 ## WS10 — Verification and CI
 
-* `tests/` — 26 unit tests covering hashing, proofs (sizes 1..39), note signatures, witness
-  cosignatures, entry bundles, DER sizes, PKI measurement, and bundles.
+* `tests/` — 269 unit tests. The CT half covers hashing, proofs, note signatures, DER sizes,
+  and PKI measurement. The MTC half is the interesting part:
+  * `test_mtc_tree.py` runs the draft's Appendix C vectors, the Figure 7/8 cases, and every
+    valid subtree interval up to a tree of 130 entries. If the tree is wrong, nothing downstream
+    can be trusted.
+  * `test_mtc_wire_ids.py` covers the encoding primitives and the OID arcs, including the
+    draft's own examples.
+  * `test_mtc_log_landmarks.py` covers the log, the checkpoints, the landmark sequence, active
+    subtree filtering, and the strict entry decoders.
+  * `test_mtc_certs.py` covers the four shapes, the size table, every field-tampering attack
+    worth naming, the checkpoint-root semantics, and strict decode round-trips for every shape.
+  * `test_mtc_cli.py` runs the three workshop commands end to end.
+* `test_staticct.py` also covers `pki.issue_leaf()`, which is what `make fill` uses to give the
+  CT log a tree with more than one leaf. A log deduplicates entries by certificate, so
+  `make demo` can only ever produce a tree of size 1; without a way to issue *distinct* leaves,
+  exercise 04 has no siblings to walk and `--index 2` does not exist.
 * `make test` runs them with the standard-library `unittest` runner (no extra dependency).
 * `make lint` runs `ruff check lab tests` (config in `pyproject.toml`).
-* `.github/workflows/ci.yml` runs lint + unit tests on Python 3.12, and builds the witness tool
-  with Go 1.25.
-* `make workshop` is the manual smoke test (needs Go 1.27 and OpenSSL 3.5, so it is not run in
-  CI).
+* `.github/workflows/ci.yml` runs lint + unit tests on Python 3.12.
+* `make workshop` is the manual smoke test. It needs Go 1.27 and OpenSSL 3.5 for the CT half, so
+  it is not run in CI; `make mtc-lab && make mtc-shapes` is the part that always works.
 
 ---
 
@@ -601,7 +708,7 @@ Worksheet: `docs/exercises/07_mtc_bundle.md`.
 ```bash
 # one-time
 make submodules
-python3 -m pip install -r requirements.txt
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 # section 1: how big is PQC?
 make measure
@@ -611,16 +718,19 @@ cat out/measurements.md
 make pki ALG=mldsa65
 make tls-demo
 
-# sections 4-7: a CT log, submission, proof, witness, and bundle
+# sections 4-5: a CT log, submission, and the proof walk
 make lab-up
 make demo
 make walk INDEX=0
 python3 -m lab.cli verify --storage-dir log --index 0 --pubkey out/log-key.pem
-make bundle INDEX=0
 make lab-down
 
-# native witnessing (starts a local witness + a witnessed log)
-make witness-demo
+# section 7: the MTC centrepiece. No log server, no Go, no OpenSSL.
+make mtc-lab
+make mtc-shapes
+python3 -m lab.cli mtc verify --knows cosigners
+python3 -m lab.cli mtc verify --knows landmark
+python3 -m lab.cli mtc verify --knows all --tamper
 
 # or everything at once
 make workshop
@@ -636,10 +746,11 @@ make workshop
 | `error 79 ... invalid CA certificate` from `openssl verify` | intermediate missing `CA:TRUE` | use `scripts/openssl/ca_ext.cnf` |
 | `checkpoint was not published in time` | server not running or wrong `--storage-dir` | check `log/tesseract.log`, `make lab-up` |
 | `failed to verify add-chain contents` | leaf does not chain to `--roots_pem_file` | generate the PKI that matches the configured root |
-| checkpoint has only 2 signatures | log started without witness flags | `make witness-demo` (sets `ADDITIONAL_SIGNER`/`WITNESS_POLICY`) |
-| witness cosignature invalid | wrong `--witness-vkey`, or witness restarted with a new key | re-run `scripts/setup_witness.sh`; keys are persisted under `out/witness/` |
+| `cannot import name 'MLDSA65PrivateKey'` | `cryptography` older than 46 | use `.venv/bin/python`; the `Makefile` picks it up if it exists |
+| `no scenario at out/mtc/scenario.json` | `mtc shapes` or `mtc verify` before `mtc lab` | the three MTC commands share state on disk; run `make mtc-lab` first |
+| `entry 7 is a null entry and cannot be certified` | expected: index 7 is the scenario's null entry | choose another `--index` |
 | `Permission denied` running a script | missing exec bit | `chmod +x scripts/*.sh` |
-| stale PID / port in use | previous run not stopped | `make lab-down`; `scripts/run_witness.sh stop` |
+| stale PID / port in use | previous run not stopped | `make lab-down` |
 
 ---
 
@@ -652,9 +763,9 @@ make workshop
 | 3. Algorithm landscape | measurement table; Falcon optional via oqs-provider (WS8, skipped) |
 | 4. Run your own CT log | `make lab-up`, `make demo`, `lab/staticct.py` |
 | 5. Merkle proofs | `lab/merkle.py`, `make walk`, `lab.cli proof`/`verify` |
-| 6. Checkpoints & witnesses | `lab/note.py`, `tools/witness/`, `make witness-demo` |
-| 7. MTC-shaped certificate | `lab/bundle.py`, `make bundle` |
-| 8–9. Discussion | `docs/facilitator_notes.md` |
+| 6. Cosigners and the subtree | `lab/mtc/cosigners.py`, `lab/mtc/landmarks.py` |
+| 7. One log, four certificates | `lab/mtc/`, `make mtc-lab`/`mtc-shapes`/`mtc-verify` |
+| 8–9. Discussion | `docs/facilitator_notes.md`, `docs/exercises/06_where_to_use.md` |
 
 ---
 

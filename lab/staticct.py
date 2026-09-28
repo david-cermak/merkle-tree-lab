@@ -219,24 +219,74 @@ def read_entry_bundles(storage_dir: str, verbose: bool = False) -> List[Entry]:
 
 
 class StaticCTClient:
-    """Talk to a local TesseraCT POSIX log."""
+    """Talk to a local TesseraCT POSIX log.
 
-    def __init__(self, base_url: str, storage_dir: Optional[str] = None, verbose: bool = False):
+    A log's origin has two parts, per the static-ct-api:
+    `https://$HOST/$PATH_PREFIX/ct/v1/...`, and the origin line must be that
+    prefix as a schema-less URL. TesseraCT derives the endpoint it thinks it was
+    reached on as `hostname + path` and warns when that does not start with the
+    configured origin.
+
+    So to satisfy the check the client has to do two things, not one: send the
+    origin's host in the `Host` header, and put the origin's path in front of
+    `/ct/v1/...`. The server has to agree on the second half, via its
+    `--path_prefix` flag. The `Host` header needs no server cooperation --
+    upstream documents that it "will serve the requests it receives regardless
+    of their `$HOST`" -- because routing is by path, not by host.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        storage_dir: Optional[str] = None,
+        verbose: bool = False,
+        origin: Optional[str] = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.storage_dir = storage_dir
         self.verbose = verbose
+        self.origin = origin.rstrip("/") if origin else None
+        self.path_prefix = ""
+        self.host_header = None
+        if self.origin:
+            # "example.com/workshop" -> host "example.com", prefix "/workshop".
+            self.host_header, _, path = self.origin.partition("/")
+            self.path_prefix = "/" + path.strip("/") if path else ""
+        if self.verbose and self.origin:
+            trace(f"origin {self.origin} -> Host: {self.host_header}, prefix {self.path_prefix!r}")
+
+    def _headers(self) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if self.host_header:
+            # The URL still points at 127.0.0.1; this only tells the server which
+            # origin the client believes it is talking to.
+            headers["Host"] = self.host_header
+        return headers
+
+    def _fail(self, path: str, exc: urllib.error.HTTPError) -> RuntimeError:
+        """Turn an HTTP error into something that says what to do about it."""
+        detail = exc.read().decode(errors="replace")
+        if self.verbose:
+            trace(f"<- HTTP {exc.code}: {detail}")
+        if exc.code == 404 and self.path_prefix:
+            return RuntimeError(
+                f"{path} failed: HTTP 404 at {self.base_url}{self.path_prefix}{path}. "
+                f"The log was started without --path_prefix={self.path_prefix}, so it "
+                f"serves {path} and not the {self.origin} submission prefix. Restart it "
+                f"(./scripts/run_tesseract.sh restart), or pass --origin='' to skip the prefix."
+            )
+        return RuntimeError(f"{path} failed: HTTP {exc.code}: {detail}")
 
     # -- submission ---------------------------------------------------------
     def _post(self, path: str, payload: dict) -> dict:
         body = json.dumps(payload).encode()
-        url = self.base_url + path
+        url = self.base_url + self.path_prefix + path
         if self.verbose:
             trace(f"POST {url}")
+            trace(f"Host: {self.host_header or '(from URL)'}")
             trace("Content-Type: application/json")
             trace(f"body ({len(body)} bytes):\n{summarize_payload(payload)}")
-        request = urllib.request.Request(
-            url, data=body, headers={"Content-Type": "application/json"}
-        )
+        request = urllib.request.Request(url, data=body, headers=self._headers())
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 raw = response.read()
@@ -245,10 +295,7 @@ class StaticCTClient:
                     trace(f"response:\n{json.dumps(json.loads(raw), indent=2)}")
                 return json.loads(raw)
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode(errors="replace")
-            if self.verbose:
-                trace(f"<- HTTP {exc.code}: {detail}")
-            raise RuntimeError(f"{path} failed: HTTP {exc.code}: {detail}") from exc
+            raise self._fail(path, exc) from exc
 
     def add_chain(self, chain_der: List[bytes]) -> dict:
         """Submit a certificate chain and return the SCT response."""
@@ -261,14 +308,20 @@ class StaticCTClient:
         """Fetch the roots the log is willing to accept."""
         import base64
 
-        url = self.base_url + "/ct/v1/get-roots"
+        path = "/ct/v1/get-roots"
+        url = self.base_url + self.path_prefix + path
         if self.verbose:
             trace(f"GET {url}")
-        with urllib.request.urlopen(url, timeout=30) as response:
-            raw = response.read()
-            if self.verbose:
-                trace(f"<- {response.status} {response.reason} ({len(raw)} bytes)")
-            data = json.loads(raw)
+            trace(f"Host: {self.host_header or '(from URL)'}")
+        request = urllib.request.Request(url, headers=self._headers())
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                raw = response.read()
+                if self.verbose:
+                    trace(f"<- {response.status} {response.reason} ({len(raw)} bytes)")
+                data = json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            raise self._fail(path, exc) from exc
         return [base64.b64decode(cert) for cert in data["certificates"]]
 
     # -- monitoring ---------------------------------------------------------

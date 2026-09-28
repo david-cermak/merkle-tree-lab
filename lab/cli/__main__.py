@@ -9,7 +9,6 @@ import sys
 import time
 from pathlib import Path
 
-from .. import bundle as bundle_mod
 from .. import certs, measure, merkle, note, pki, staticct
 
 
@@ -44,6 +43,24 @@ def _print_entry(entry: staticct.Entry) -> None:
     )
 
 
+DEFAULT_ORIGIN = "example.com/workshop"
+
+
+def _client(args: argparse.Namespace) -> staticct.StaticCTClient:
+    """Build a CT client that knows the log's submission prefix.
+
+    The origin is not decoration: a log checks that requests arrive on its
+    submission prefix, so a client that ignores it earns a warning per request
+    and, once the server is configured with --path_prefix, a 404.
+    """
+    return staticct.StaticCTClient(
+        args.log or "",
+        args.storage_dir,
+        verbose=args.verbose,
+        origin=getattr(args, "origin", None) or None,
+    )
+
+
 def cmd_submit(args: argparse.Namespace) -> int:
     chain = []
     for path in args.chain:
@@ -53,7 +70,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
         return 1
     if args.verbose:
         _print_chain(chain)
-    client = staticct.StaticCTClient(args.log, args.storage_dir, verbose=args.verbose)
+    client = _client(args)
     response = client.add_chain(chain)
     extensions = base64.b64decode(response.get("extensions", ""))
     try:
@@ -67,19 +84,87 @@ def cmd_submit(args: argparse.Namespace) -> int:
     return 0
 
 
-def _read_key_arg(value: str) -> str:
-    """Accept either a literal key or a path to a file containing one."""
-    path = Path(value)
-    if path.exists() and path.is_file():
-        return path.read_text().strip()
-    return value.strip()
+def cmd_fill(args: argparse.Namespace) -> int:
+    """Submit several distinct certificates so the log's tree actually grows.
+
+    ``cmd_demo`` submits the one leaf certificate in ``out/pki``, and re-running
+    it submits the *same* certificate again. A CT log deduplicates entries by
+    certificate, so the second submission is accepted and signed but integrates
+    nothing: the tree stays at size 1 and the inclusion proof has no siblings.
+    That is fine for demonstrating an SCT, useless for exercise 04, which needs
+    a real tree to walk.
+
+    So this issues ``--count`` fresh leaves from the same intermediate and
+    submits each one. Distinct subject names mean distinct DER, distinct leaf
+    hashes, and entries the log will actually integrate.
+    """
+    pki_dir = Path(args.pki_dir)
+    if args.count < 1:
+        print(f"--count must be at least 1, got {args.count}", file=sys.stderr)
+        return 1
+    directory = pki_dir / args.algorithm
+    if not (directory / "int.crt").exists():
+        pki.ensure_openssl(args.openssl)
+        pki.generate(args.algorithm, pki_dir, openssl=args.openssl)
+
+    client = _client(args)
+    names = [f"www{index}" for index in range(args.count)]
+    submitted = []
+    for name in names:
+        leaf = pki.issue_leaf(args.algorithm, pki_dir, name, openssl=args.openssl)
+        chain = certs.read_certificates(str(leaf)) + certs.read_certificates(
+            str(directory / "int.crt")
+        )
+        response = client.add_chain(chain)
+        extensions = base64.b64decode(response.get("extensions", ""))
+        try:
+            index = staticct.parse_ct_extensions(extensions)
+        except ValueError:
+            index = None
+        submitted.append(index)
+        if args.verbose:
+            print(f"  submitted {name}.example at index {index}")
+
+    deadline = time.time() + args.timeout
+    size = 0
+    highest = max((i for i in submitted if i is not None), default=None)
+    while time.time() < deadline:
+        try:
+            size = note.parse_checkpoint(client.checkpoint_bytes()).size
+        except FileNotFoundError:
+            size = 0
+        if highest is not None and size > highest:
+            break
+        time.sleep(0.25)
+
+    if highest is None:
+        # Every submission came back without a usable SCT leaf index, so there is
+        # nothing to wait for. Say that, rather than blaming the checkpoint.
+        print(
+            f"Filled the log with {len(names)} {args.algorithm} leaves, but none of them "
+            f"returned a parseable SCT leaf index",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"Filled the log with {len(names)} distinct {args.algorithm} leaves")
+    print(f"  leaf indices  : {', '.join(str(i) for i in submitted)}")
+    print(f"  tree size     : {size}")
+    if size <= highest:
+        print("  the log has not published a checkpoint covering them yet", file=sys.stderr)
+        return 1
+    # The newest leaf may still be a lone leaf; the oldest one is guaranteed to
+    # have a sibling now that the tree holds more than one entry.
+    oldest = min(i for i in submitted if i is not None)
+    print(f"\nNow walk a proof that has siblings: lab.cli walk --index {oldest}")
+    return 0
 
 
 def cmd_checkpoint(args: argparse.Namespace) -> int:
     if args.file:
         checkpoint = note.read_checkpoint(args.file)
     else:
-        client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
+        client = _client(args)
         checkpoint = note.parse_checkpoint(client.checkpoint_bytes())
     print(f"origin      : {checkpoint.origin}")
     print(f"tree size   : {checkpoint.size}")
@@ -87,23 +172,17 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
     print(f"signatures  : {len(checkpoint.signatures)}")
     for signature in checkpoint.signatures:
         print(f"  - {signature.name} (keyhash {signature.key_hash:08x})")
-    ok = True
     if args.pubkey:
         public_key = note.load_public_key(args.pubkey)
         sig_ok = note.verify_checkpoint(checkpoint, public_key)
         print(f"log signature  : {'VALID' if sig_ok else 'INVALID'}")
-        ok = ok and sig_ok
-    if args.witness_vkey:
-        vkey = _read_key_arg(args.witness_vkey)
-        witness_ok = note.verify_cosignature(checkpoint, vkey)
-        name, _, _ = note.parse_vkey(vkey)
-        print(f"witness cosig  : {'VALID' if witness_ok else 'INVALID'} ({name})")
-        ok = ok and witness_ok
-    return 0 if ok else 1
+        return 0 if sig_ok else 1
+    return 0
+
 
 
 def cmd_proof(args: argparse.Namespace) -> int:
-    client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
+    client = _client(args)
     entries = client.entries()
     if not 0 <= args.index < len(entries):
         print(f"index {args.index} out of range (log has {len(entries)} entries)", file=sys.stderr)
@@ -126,7 +205,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if args.proof:
         data = json.loads(Path(args.proof).read_text())
     else:
-        client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
+        client = _client(args)
         entries = client.entries()
         proof = client.inclusion_proof(args.index)
         data = {
@@ -136,7 +215,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
             "audit_path": [_hex(node) for node in proof],
         }
 
-    client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
+    client = _client(args)
     checkpoint = note.parse_checkpoint(client.checkpoint_bytes())
 
     leaf_hash = bytes.fromhex(data["leaf_hash"])
@@ -204,7 +283,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
     if args.verbose:
         _print_chain(chain)
 
-    client = staticct.StaticCTClient(args.log, args.storage_dir, verbose=args.verbose)
+    client = _client(args)
     response = client.add_chain(chain)
     extensions = base64.b64decode(response.get("extensions", ""))
     try:
@@ -253,7 +332,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
 
 
 def cmd_walk(args: argparse.Namespace) -> int:
-    client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
+    client = _client(args)
     entries = client.entries()
     if not 0 <= args.index < len(entries):
         print(f"index {args.index} out of range (log has {len(entries)} entries)", file=sys.stderr)
@@ -281,51 +360,6 @@ def cmd_walk(args: argparse.Namespace) -> int:
     return 0 if root == checkpoint.root_hash else 1
 
 
-def cmd_bundle(args: argparse.Namespace) -> int:
-    client = staticct.StaticCTClient(args.log or "", args.storage_dir, verbose=args.verbose)
-    entries = client.entries()
-    if not 0 <= args.index < len(entries):
-        print(f"index {args.index} out of range (log has {len(entries)} entries)", file=sys.stderr)
-        return 1
-    entry = entries[args.index]
-    if args.verbose:
-        _print_entry(entry)
-    checkpoint_raw = client.checkpoint_bytes()
-    checkpoint = note.parse_checkpoint(checkpoint_raw)
-    if args.verbose:
-        staticct.trace("signed checkpoint (note format):\n" + checkpoint_raw.decode().rstrip())
-        staticct.trace(
-            "checkpoint signatures: "
-            + ", ".join(f"{s.name} ({s.key_hash:08x})" for s in checkpoint.signatures)
-        )
-    proof = client.inclusion_proof(args.index)
-
-    bundle = bundle_mod.build_bundle(
-        certificate=entry.certificate,
-        leaf_index=args.index,
-        tree_size=len(entries),
-        leaf_hash=entry.leaf_hash(),
-        audit_path=proof,
-        checkpoint=checkpoint,
-        checkpoint_raw=checkpoint_raw,
-    )
-    size = bundle_mod.write_bundle(bundle, args.output)
-
-    if args.chain:
-        chain_certs = certs.read_certificates(args.chain)
-    else:
-        pki_dir = Path(args.pki_dir) / args.algorithm
-        chain_certs = certs.read_certificates(str(pki_dir / "leaf.crt")) + certs.read_certificates(
-            str(pki_dir / "int.crt")
-        )
-    conventional = b"".join(chain_certs)
-    leaf_certificate = chain_certs[0] if chain_certs else entry.certificate
-
-    print(bundle_mod.format_comparison(bundle, leaf_certificate, conventional))
-    print(f"\nWrote {args.output} ({size} bytes)")
-    return 0
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lab.cli", description="Merkle Tree Lab client")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -351,9 +385,6 @@ def build_parser() -> argparse.ArgumentParser:
     checkpoint.add_argument("--storage-dir", default="log")
     checkpoint.add_argument("--file", help="read the checkpoint from this file instead")
     checkpoint.add_argument("--pubkey", help="verify the log signature with this PEM key")
-    checkpoint.add_argument(
-        "--witness-vkey", help="verify a witness cosignature with this note vkey (or a file)"
-    )
     checkpoint.set_defaults(func=cmd_checkpoint)
 
     proof = sub.add_parser(
@@ -416,17 +447,33 @@ def build_parser() -> argparse.ArgumentParser:
     demo_cmd.add_argument("--timeout", type=float, default=30.0)
     demo_cmd.set_defaults(func=cmd_demo)
 
-    bundle_cmd = sub.add_parser(
-        "bundle", parents=[common], help="build an MTC-shaped bundle and size it"
+    fill_cmd = sub.add_parser(
+        "fill",
+        parents=[common],
+        help="submit several *distinct* certificates, so the log's tree grows",
     )
-    bundle_cmd.add_argument("--storage-dir", default="log")
-    bundle_cmd.add_argument("--log", default="http://127.0.0.1:6962")
-    bundle_cmd.add_argument("--index", type=int, default=0)
-    bundle_cmd.add_argument("--output", default="out/mtc_bundle.json")
-    bundle_cmd.add_argument("--pki-dir", default="out/pki")
-    bundle_cmd.add_argument("--algorithm", default="mldsa65", choices=sorted(pki.ALGORITHMS))
-    bundle_cmd.add_argument("--chain", help="conventional chain PEM file(s) for comparison")
-    bundle_cmd.set_defaults(func=cmd_bundle)
+    fill_cmd.add_argument("--count", type=int, default=8, help="how many leaves to add")
+    fill_cmd.add_argument("--log", default="http://127.0.0.1:6962")
+    fill_cmd.add_argument("--storage-dir", default="log")
+    fill_cmd.add_argument("--pki-dir", default="out/pki")
+    fill_cmd.add_argument("--algorithm", default="mldsa65", choices=sorted(pki.ALGORITHMS))
+    fill_cmd.add_argument("--openssl", help="OpenSSL binary")
+    fill_cmd.add_argument("--timeout", type=float, default=30.0)
+    fill_cmd.set_defaults(func=cmd_fill)
+
+    from .mtc import build_parser as build_mtc_parser
+
+    build_mtc_parser(sub)
+
+    # The log's origin is its submission prefix, so every command that talks to
+    # a log over HTTP needs it. Defaults match scripts/run_tesseract.sh so that
+    # "make lab-up" and "make demo" agree without anyone passing anything.
+    for action in sub.choices.values():
+        if any("--log" in str(a.option_strings) for a in action._actions):
+            action.add_argument(
+                "--origin", default=DEFAULT_ORIGIN,
+                help="log origin, i.e. its submission prefix (default %(default)s)",
+            )
 
     return parser
 

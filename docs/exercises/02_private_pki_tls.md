@@ -29,10 +29,15 @@ Verify return code: 0 (ok)
    systems you distribute it to.)
 4. What did you **not** need to use? (Google, Mozilla, Apple, a public CT log,
    a browser root program.)
-5. When is MTC unnecessary? When does it start to pay off?
+5. **When is MTC unnecessary?** Concretely: the client trusted only `root.crt`,
+   and no other client in this setup can observe what the CA issued. What
+   transparency guarantee are you giving up, and who would have to be watching
+   to notice a problem? When does MTC start to pay off — and see
+   [exercise 6](06_where_to_use.md) question 3 for the deployment cases where the
+   answer is "don't bother".
 
 ## Takeaway
 
 If you control both ends, conventional PQC X.509 is the simplest path. MTC
 becomes interesting when the scale and repeated-signature overhead justify the
-extra machinery.
+extra machinery — which is what [exercise 5](05_mtc_four_shapes.md) measures.

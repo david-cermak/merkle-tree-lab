@@ -1,4 +1,12 @@
-Workshop agenda — 90–120 min
+Workshop agenda — 90–135 min
+
+Full run is about 135 minutes. To hit 90–120, drop section 3 (the
+algorithm landscape is a talk, not a lab), shorten section 1, and cut
+exercise 05's steps 3 and 5. Section 7 is the one to protect: it is
+the centrepiece, and it is the only section that needs no log server.
+
+Each hands-on section names its worksheet in docs/exercises/.
+
 0. From X.509 to Merkle Tree Certificates — 15 min
 
 Goal: Build the mental model before touching the tools.
@@ -57,6 +65,8 @@ Could we use the Merkle tree not just to log certificates, but as part of how ce
 That is the motivation for MTC.
 
 1. Baseline: How expensive are PQC certificates? — 20 min
+
+Worksheet: docs/exercises/01_pqc_sizes.md
 
 This should be the first hands-on section.
 
@@ -118,6 +128,8 @@ Where did the extra bytes actually come from?
 This is a very useful exercise before introducing MTC.
 
 2. PQC certificates without MTC — 15 min
+
+Worksheet: docs/exercises/02_private_pki_tls.md
 
 I'd make this a first-class workshop section, because it's an important practical conclusion.
 
@@ -251,6 +263,8 @@ That's a very useful takeaway for engineers.
 
 4. Run your own Certificate Transparency log — 15 min
 
+Worksheet: docs/exercises/03_ct_log.md
+
 Now return to CT.
 
 Students already understand the theory and have seen the size problem.
@@ -291,6 +305,8 @@ The current MTC draft explicitly points out that CT log overhead grows with cert
 
 5. Merkle proofs — 10 min
 
+Worksheet: docs/exercises/04_merkle_proofs.md
+
 Now get concrete.
 
 Take one certificate from the log.
@@ -329,89 +345,103 @@ Inclusion proof
    =
 "Here is cryptographic proof that
  it is included."
-6. Signed checkpoints and witnesses — 10 min
+6. Cosigners and the subtree — 10 min
 
-Introduce the next layer.
-
-The log publishes an authenticated checkpoint/tree head.
-
-Then introduce the problem of trusting only the log.
-
-Add a witness/cosigner:
+The log publishes an authenticated checkpoint/tree head, and it signs it
+with two cosigners:
 
                  Log
                   |
-            signed checkpoint
+        signed checkpoint
+        (subtree [0, N) of
+         the whole log)
                   |
-                  v
-              Witness
+            +-----+-----+
+            |           |
+        CA cosigner  external cosigner
+            |           |
+        cosignature  cosignature
+            +-----+-----+
                   |
-             cosignature
-                  |
-                  v
               verifier
+
+The unit a cosigner signs is a *subtree*, not the tree. Whenever the CA
+checkpoints, it also signs the subtrees covering the entries added since
+the last checkpoint, and every certificate in that batch reuses those
+signatures. That is where the amortisation comes from.
 
 Discuss:
 
-consistency
-split views
-freshness
-why an inclusion proof alone isn't sufficient
-why MTC needs timely tree publication
+what a cosignature asserts ("this subtree has this hash")
+why a subtree rather than the whole tree
+why a timestamped signature for a checkpoint, and
+  nothing else (§5.3.2)
+why the CA's own cosigner ID equals its CA ID (§5.4)
+that the draft's separate *witness* architecture is not
+  built in this workshop -- cosigners are
 
-This is also a good point to emphasize that the MTC design is not merely "put a Merkle proof into a certificate." The current draft has a CA issuance log, checkpoints, cosigners, and inclusion proofs as parts of the construction.
+7. One log, four certificates — 30 min
 
-7. Build an MTC-shaped certificate — 15 min
+This is the centrepiece, and it is hands-on.
 
-Now assemble the pieces.
+    make mtc-lab
 
-Conceptually:
+One command builds the CA: an issuance log of 20 entries (with a null
+entry at index 7), two checkpoints, one landmark, and real ML-DSA keys
+for two cosigners plus the CA. It prints the log entry size, which is
+the storage argument in one number:
 
-             MTC-shaped bundle
+    the log entry      131 bytes, hashed to 32 bytes
+    a CT-style entry   would instead carry the whole 1974-byte
+                       public key and a signature
 
-        certificate / leaf
-                 +
-        inclusion proof
-                 +
-          signed subtree
-                 +
-           cosignatures
+Then cut all four shapes from the same entry:
 
-Compare that with the traditional certificate:
+    make mtc-shapes
 
-       Traditional PQ certificate
+        shape                subtree    sigs  sig bytes  total
+        ---------------------------------------------------
+        directly signed      --            1       3309   5439
+        standalone           [0, 20)      2       4840   7165
+        checkpoint-relative  [0, 8)       2       4840   7101
+        landmark-relative    [0, 16)      0          0   2269
 
-       certificate
-            +
-       large PQ signature
+Say the surprising part out loud: the MTC shapes are *bigger*. Two
+ML-DSA-44 cosignatures cost more than one ML-DSA-65 signature. MTC is
+not a compression scheme. What it buys is transparency, and the
+ability to sign a batch instead of a certificate.
 
-And then compare the two on the wire.
+The one genuinely small row is the landmark-relative one, and it is
+small only because the client is expected to already hold the hash.
 
-This is the payoff experiment.
+Then show what a client can actually check:
 
-Measure:
+    python3 -m lab.cli mtc verify --knows cosigners
+    python3 -m lab.cli mtc verify --knows landmark
 
-Traditional PQ certificate
-          vs
-MTC-shaped certificate
+        client knows     direct  standalone  checkpoint  landmark
+        --------------------------------------------------------
+        cosigner keys    refused  verified    verified    not yet
+                                                        checkable
+        + landmark       refused  verified    verified    verified
+        + the CA's key   verified  verified    verified    verified
 
-For a single certificate.
+"Not yet checkable" is the line to stop on. A landmark-relative
+certificate is not wrong, it is unverifiable until the client has the
+landmark. A client that treats those the same will drop good
+certificates.
 
-Then repeat for different numbers of certificates.
+Finish the section by changing one field and watching all four shapes
+refuse it, each for a different reason:
 
-The important question isn't simply:
+    python3 -m lab.cli mtc verify --knows all --tamper
 
-"Is MTC smaller?"
-
-It's:
-
-"At what scale does amortizing the large signature become worthwhile?"
-
-That's a much more interesting engineering result.
+Worksheet: docs/exercises/05_mtc_four_shapes.md
 
 8. Discussion: where would I actually use this? — 10 min
 
-I'd finish with a practical decision matrix.
+I'd finish with a practical decision matrix. The worksheet for this
+section is docs/exercises/06_where_to_use.md.
 
 Public Web PKI
 
@@ -475,9 +505,11 @@ Here the tree-based approach becomes much more interesting because you naturally
 
 9. Final discussion: three possible strategies
 
-I'd end the workshop with this slide:
+I'd end the workshop with this slide. It is the same table as
+docs/exercises/06_where_to_use.md, so the room can follow along:
 
-Strategy A — Traditional PQC X.509
+Strategy A -- Traditional PQC X.509
+
 CA
  ↓
 PQC certificate
@@ -529,3 +561,4 @@ More complicated.
 Potentially much more efficient at scale.
 
 But it requires new protocol and implementation support.
+opencode -s ses_f65479062ffeIXVYDQD0Bx6zYG

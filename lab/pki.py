@@ -186,6 +186,75 @@ def generate(
     return paths
 
 
+def issue_leaf(
+    algorithm: str,
+    outdir: Path,
+    name: str,
+    openssl: Optional[str] = None,
+    days: int = 365,
+) -> Path:
+    """Issue one extra leaf from an *existing* intermediate, and return its path.
+
+    :func:`generate` makes one leaf per algorithm, and re-running it returns the
+    same certificate. That is right for measuring sizes but useless for building
+    a CT tree: the log deduplicates entries by certificate, so submitting the
+    same leaf twice integrates it once and the tree never grows past one entry.
+
+    This issues a genuinely distinct certificate under the same intermediate --
+    a fresh key and a different subject name, so the DER differs and the leaf
+    hash differs. The root and intermediate are untouched, so certificates
+    issued before and after are interchangeable for a client that trusts the
+    root.
+    """
+    if algorithm not in ALGORITHMS:
+        raise PkiError(
+            f"unknown algorithm {algorithm!r}; known: {', '.join(sorted(ALGORITHMS))}"
+        )
+    alg = ALGORITHMS[algorithm]
+    openssl = openssl or openssl_binary()
+    # _run() executes with cwd=directory, so every path handed to OpenSSL has to
+    # be absolute or it will be resolved against the wrong directory.
+    directory = (Path(outdir) / algorithm).resolve()
+    int_crt = directory / "int.crt"
+    int_key = directory / "int.key"
+    if not (int_crt.exists() and int_key.exists()):
+        raise PkiError(
+            f"no intermediate at {int_crt}; run 'lab.cli pki --algorithm {algorithm}' first"
+        )
+
+    directory.mkdir(parents=True, exist_ok=True)
+    key = directory / f"{name}.key"
+    csr = directory / f"{name}.csr"
+    crt = directory / f"{name}.crt"
+
+    _run(
+        [
+            openssl, "req", "-new", "-newkey", *alg.key_args,
+            "-keyout", str(key), "-out", str(csr), "-nodes",
+            "-subj", f"/CN={name}.example",
+        ],
+        directory,
+    )
+    _run(
+        [
+            openssl, "x509", "-req", "-in", str(csr),
+            "-CA", str(int_crt), "-CAkey", str(int_key), "-CAcreateserial",
+            "-out", str(crt), "-days", str(days),
+            "-extfile", str(OPENSSL_LEAF_EXT), "-extensions", "v3_leaf",
+        ],
+        directory,
+    )
+    _run(
+        [
+            openssl, "verify",
+            "-CAfile", str(directory / "root.crt"),
+            "-untrusted", str(int_crt), str(crt),
+        ],
+        directory,
+    )
+    return crt
+
+
 def generate_all(
     algorithms: Iterable[str],
     outdir: Path,

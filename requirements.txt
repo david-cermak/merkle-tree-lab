@@ -1,6 +1,8 @@
 # Merkle Tree Lab — Python requirements
 #
 # The client is intentionally light on dependencies: HTTP and JSON use the
-# standard library, and only ECDSA checkpoint-signature verification needs
-# `cryptography`. Tests use the standard-library `unittest` runner.
-cryptography>=41
+# standard library. `cryptography` is needed for the ML-DSA key generation and
+# verification in the MTC lab, which is why the floor is 46 -- ML-DSA arrived
+# in 46.0. The system Python on some workshop machines is older than that, so
+# use the repository's .venv. Tests use the standard-library `unittest` runner.
+cryptography>=46

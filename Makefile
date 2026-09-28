@@ -2,7 +2,9 @@
 #
 # Run `make` or `make help` to list targets.
 
-PYTHON      ?= python3
+# Prefer the repo virtualenv: the MTC lab needs ML-DSA, which needs
+# cryptography >= 46. Fall back to whatever python3 is on PATH.
+PYTHON      ?= $(shell test -x .venv/bin/python && echo .venv/bin/python || echo python3)
 GO          ?= go
 GOTOOLCHAIN ?= go1.27.0
 
@@ -13,10 +15,12 @@ ORIGIN      ?= example.com/workshop
 HTTP_ADDR   ?= 127.0.0.1:6962
 ROOTS_PEM   ?= out/pki/mldsa65/root.crt
 LOG_KEY     ?= out/log-key.pem
+MTC_DIR     ?= out/mtc
 VERBOSE     ?=
 
 .DEFAULT_GOAL := help
-.PHONY: help submodules build-tesseract build-witness lab-up lab-down pki pki-all tls-demo measure demo walk bundle witness-setup witness-demo workshop test lint clean
+.PHONY: help submodules build-tesseract lab-up lab-down pki pki-all tls-demo measure demo walk mtc-lab mtc-shapes mtc-verify workshop test lint clean
+
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -49,27 +53,30 @@ measure: ## Measure certificate/key/signature sizes (generates missing PKIs)
 	$(PYTHON) -m lab.cli measure --generate
 
 demo: ## Submit a certificate and verify its inclusion proof (needs lab-up; VERBOSE=1 traces HTTP)
-	$(PYTHON) -m lab.cli demo $(if $(VERBOSE),--verbose,) --storage-dir $(STORAGE_DIR) --log-key $(LOG_KEY)
+	$(PYTHON) -m lab.cli demo $(if $(VERBOSE),--verbose,) --storage-dir $(STORAGE_DIR) \
+		--log-key $(LOG_KEY) --log http://$(HTTP_ADDR) --origin $(ORIGIN)
 
 walk: ## Print an inclusion proof hash-by-hash (needs lab-up; VERBOSE=1 shows entry bytes)
 	$(PYTHON) -m lab.cli walk $(if $(VERBOSE),--verbose,) --storage-dir $(STORAGE_DIR) --index $(or $(INDEX),0)
 
-bundle: ## Build and size an MTC-shaped bundle (needs lab-up; VERBOSE=1 shows the checkpoint)
-	$(PYTHON) -m lab.cli bundle $(if $(VERBOSE),--verbose,) --storage-dir $(STORAGE_DIR) --index $(or $(INDEX),0) \
-		--output out/mtc_bundle.json
+fill: ## Submit N distinct certificates so the tree grows (needs lab-up; VERBOSE=1 traces)
+	$(PYTHON) -m lab.cli fill $(if $(VERBOSE),--verbose,) --storage-dir $(STORAGE_DIR) \
+		--count $(or $(N),8) --algorithm $(or $(ALG),mldsa65) \
+		--log $(or $(LOG),http://$(HTTP_ADDR)) --origin $(ORIGIN)
 
-build-witness: ## Build the local tlog witness (requires Go 1.27)
-	mkdir -p $(BIN_DIR)
-	cd tools/witness && GOTOOLCHAIN=$(GOTOOLCHAIN) $(GO) build -o ../../$(BIN_DIR)/witness .
+mtc-lab: ## Build the MTC CA lab: issuance log + 2 checkpoints + 1 landmark (ENTRIES=20 LOGNO=8)
+	$(PYTHON) -m lab.cli mtc lab --outdir $(MTC_DIR) --entries $(or $(ENTRIES),20) --log $(or $(LOGNO),8)
 
-witness-setup: build-witness ## Generate witness keys and policy
-	./scripts/setup_witness.sh
+mtc-shapes: ## Emit the four certificate shapes for one entry and size them (INDEX=3)
+	$(PYTHON) -m lab.cli mtc shapes --outdir $(MTC_DIR) --index $(or $(INDEX),3)
 
-witness-demo: ## Run the native-witness demo (start witness + log, verify cosignature)
-	./scripts/witness_demo.sh
+mtc-verify: ## Run the relying-party verification walk (INDEX=3 KNOWS=landmark TAMPER=0)
+	$(PYTHON) -m lab.cli mtc verify --outdir $(MTC_DIR) --index $(or $(INDEX),3) \
+		--knows $(or $(KNOWS),landmark) $(if $(TAMPER),--tamper,)
 
 workshop: ## Run the full end-to-end happy path
 	./scripts/workshop.sh
+
 
 test: ## Run the unit test suite
 	$(PYTHON) -m unittest discover -s tests -v
