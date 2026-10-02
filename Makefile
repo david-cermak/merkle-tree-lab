@@ -13,13 +13,13 @@ TESSERACT   := $(BIN_DIR)/tesseract-posix
 STORAGE_DIR ?= log
 ORIGIN      ?= example.com/workshop
 HTTP_ADDR   ?= 127.0.0.1:6962
-ROOTS_PEM   ?= out/pki/mldsa65/root.crt
+ROOTS_PEM   ?= out/pki/workshop-roots.pem
 LOG_KEY     ?= out/log-key.pem
 MTC_DIR     ?= out/mtc
 VERBOSE     ?=
 
 .DEFAULT_GOAL := help
-.PHONY: help submodules build-tesseract lab-up lab-down pki pki-all tls-demo measure demo walk mtc-lab mtc-shapes mtc-verify workshop test lint clean
+.PHONY: help submodules build-tesseract lab-up lab-down lab-reset pki pki-all tls-demo measure demo walk mtc-lab mtc-shapes mtc-verify workshop test lint clean
 
 
 help: ## Show this help
@@ -40,6 +40,10 @@ lab-up: build-tesseract ## Build and start the local TesseraCT POSIX log
 lab-down: ## Stop the local TesseraCT log
 	./scripts/run_tesseract.sh stop
 
+lab-reset: build-tesseract ## Stop, wipe log storage, and start empty (workshop restart)
+	STORAGE_DIR=$(STORAGE_DIR) ORIGIN=$(ORIGIN) HTTP_ADDR=$(HTTP_ADDR) \
+	ROOTS_PEM=$(ROOTS_PEM) LOG_KEY=$(LOG_KEY) ./scripts/run_tesseract.sh reset
+
 pki: ## Generate one PKI (override with ALG=mldsa65 etc.)
 	$(PYTHON) -m lab.cli pki --algorithm $(or $(ALG),mldsa65)
 
@@ -52,8 +56,9 @@ tls-demo: ## Run the private-PQC-PKI TLS demo (ALG=mldsa65; MODE=server|client f
 measure: ## Measure certificate/key/signature sizes (generates missing PKIs)
 	$(PYTHON) -m lab.cli measure --generate
 
-demo: ## Submit a certificate and verify its inclusion proof (needs lab-up; VERBOSE=1 traces HTTP)
+demo: ## Submit a certificate and verify its inclusion proof (needs lab-up; ALG=ecdsa-p256|mldsa65; VERBOSE=1)
 	$(PYTHON) -m lab.cli demo $(if $(VERBOSE),--verbose,) --storage-dir $(STORAGE_DIR) \
+		--algorithm $(or $(ALG),mldsa65) \
 		--log-key $(LOG_KEY) --log http://$(HTTP_ADDR) --origin $(ORIGIN)
 
 walk: ## Print an inclusion proof hash-by-hash (needs lab-up; VERBOSE=1 shows entry bytes)

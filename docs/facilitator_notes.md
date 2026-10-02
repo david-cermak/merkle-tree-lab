@@ -52,7 +52,7 @@ build, you can still run the centrepiece.
 | 0–15 | From X.509 to MTC (theory) | — | discussion |
 | 15–35 | Baseline PQC cost | `make measure` | size table (below) |
 | 35–50 | PQC X.509 without MTC | `make pki ALG=mldsa65 && make tls-demo` | prints `OpenSSL 3.5.x`, then `Verification: OK`, `Peer signature type: mldsa65` |
-| 50–60 | CT log and what it stores | `make lab-up`, `make demo` | `Inclusion: VALID`, `Checkpoint sig: VALID` |
+| 50–60 | CT log and Static CT API | `make lab-reset`, then `make demo ALG=ecdsa-p256 VERBOSE=1`, then `ALG=mldsa65` | SCT + `Inclusion: VALID`; classical entry tiny vs ML-DSA tile |
 | 60–75 | Merkle proofs, step by step | `make fill N=8`, then `make walk INDEX=2` and `INDEX=7` | hash-by-hash, `MATCH: True`, one `inner` and one `border` path |
 | 75–105 | **One log, four certificates** | `make mtc-shapes`, `python3 -m lab.cli mtc verify` | the four-shape table (below) |
 | 105–120 | Which shape would you deploy? | — | discussion |
@@ -145,8 +145,9 @@ encoding.)
 | `cannot import name 'MLDSA65PrivateKey'` | `cryptography` older than 46 | use `.venv/bin/python`, reinstall from `requirements.txt` |
 | `algorithm unimplemented` on submit | TesseraCT built with Go < 1.27 | `make build-tesseract` (uses `GOTOOLCHAIN=go1.27.0`) |
 | `invalid CA certificate` | missing `basicConstraints=CA:TRUE` | use `scripts/openssl/ca_ext.cnf` (already wired) |
-| `certificate signed by unknown authority` | leaf does not chain to the log's `--roots_pem_file` | log the matching algorithm (default `mldsa65`) |
-| `checkpoint was not published in time` | log not running / wrong storage dir | `make lab-down && make lab-up` |
+| `certificate signed by unknown authority` | leaf does not chain to the log's roots | ensure `out/pki/workshop-roots.pem` exists (`make lab-up` builds it from ecdsa-p256 + mldsa65) |
+| `checkpoint was not published in time` | log not running / wrong storage dir | `make lab-reset` (or `make lab-down && make lab-up`) |
+| leftover entries from a previous demo | CT is append-only; no delete API | `make lab-reset` wipes `log/` and starts empty |
 | `no scenario at out/mtc/scenario.json` | `mtc shapes` or `mtc verify` before `mtc lab` | run `make mtc-lab` first; the commands share state on disk |
 | `entry 7 is a null entry and cannot be certified` | expected — index 7 is the null entry | pick another index |
 | port already in use | stale process | `make lab-down` |
@@ -169,6 +170,12 @@ encoding.)
 ## Facilitation tips
 
 * Keep `make measure` output on screen for the first half.
+* Before exercise 03, `make lab-reset` so everyone starts from tree size 0. Say
+  out loud that CT has no delete: restarting the workshop means wiping storage.
+* In exercise 03, do **classical first** (`ALG=ecdsa-p256 VERBOSE=1`) and pause
+  on the Static CT split: submission JSON vs static `log/checkpoint` + `log/tile`.
+  Then submit ML-DSA and compare tile/entry size. Mention Azul only as another
+  Static CT API implementation — do not run it.
 * Run `make fill N=8` *before* exercise 04, not `make demo` twice. `make demo`
   resubmits the same leaf, the log deduplicates it, and the tree stays at size 1
   with no siblings to pause at. Fill first, then walk `--index 2` and `--index 7`

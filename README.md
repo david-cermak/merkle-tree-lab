@@ -99,15 +99,17 @@ make measure
 # 2. Use the private PQC PKI over TLS (one server, one client)
 make tls-demo
 
-# 3. Build and start the local CT log
+# 3. Build and start the local CT log (use lab-reset to wipe prior entries)
 make lab-up
+# make lab-reset   # stop, wipe log/, start empty — use when restarting a workshop
 
 # 4. Submit a certificate, verify the proof, and walk it hash by hash
-make demo
+#    Classical first (Static CT API tour), then PQC for the size contrast:
+make demo ALG=ecdsa-p256 VERBOSE=1
+make demo ALG=mldsa65
 make walk INDEX=0
 
 # add VERBOSE=1 to trace the HTTP POST and the storage reads
-make demo VERBOSE=1
 make walk INDEX=0 VERBOSE=1
 
 # 5. Give the log a real tree: N distinct certificates

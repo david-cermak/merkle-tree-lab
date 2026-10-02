@@ -9,7 +9,7 @@ one-time setup in the [README](../../README.md), and each says what it needs.
 |---|---|---:|---|---|
 | 01 | [How expensive is PQC?](01_pqc_sizes.md) | 15 min | `make measure` | Baseline sizes |
 | 02 | [A private PQC PKI over TLS](02_private_pki_tls.md) | 10 min | the generated PKIs | PQC without MTC |
-| 03 | [Run your own CT log](03_ct_log.md) | 15 min | `make lab-up` | Certificate Transparency |
+| 03 | [Run your own CT log](03_ct_log.md) | 15 min | `make lab-reset` | Certificate Transparency / Static CT API |
 | 04 | [Merkle proofs, step by step](04_merkle_proofs.md) | 10 min | a running log | Inclusion proofs |
 | **05** | **[One log, four certificates](05_mtc_four_shapes.md)** | **30 min** | `make mtc-lab` | **Merkle Tree Certificates** |
 | 06 | [Where would I actually use this?](06_where_to_use.md) | 10 min | exercise 05 | Choosing a design |
