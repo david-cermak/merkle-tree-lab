@@ -15,7 +15,7 @@ knows.
 
 The lab lets you:
 
-1. Generate classical (ECDSA/RSA) and post-quantum (ML-DSA, SLH-DSA) certificate chains and
+1. Generate classical (ECDSA/RSA) and post-quantum (ML-DSA, SLH-DSA, Falcon) certificate chains and
    measure how much larger PQC signatures and public keys really are.
 2. Build a private PQC PKI and use it over TLS — without Merkle Tree Certificates.
 3. Run your own CT log locally with TesseraCT's POSIX backend (no database, no containers).
@@ -74,6 +74,8 @@ ones.
   use a virtualenv (`.venv` is picked up by the `Makefile` automatically).
 - **OpenSSL 3.5+** with ML-DSA/SLH-DSA support in the default provider.
   (The author's local build lives in `$HOME/ossl-3.5`; adjust `PATH`/`LD_LIBRARY_PATH` as needed.)
+  Falcon measurement additionally needs [oqs-provider](https://github.com/open-quantum-safe/oqs-provider)
+  via `OPENSSL_MODULES` (see facilitator notes); without it, `make measure` skips Falcon.
 - `git` (to fetch the TesseraCT submodule).
 
 No Docker or MySQL is required: the POSIX backend is a single binary.

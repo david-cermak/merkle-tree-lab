@@ -46,8 +46,8 @@ pki: ## Generate one PKI (override with ALG=mldsa65 etc.)
 pki-all: ## Generate the full measurement set of PKIs
 	./scripts/gen_pki.sh
 
-tls-demo: ## Run the private-PQC-PKI TLS demo (ALG=mldsa65)
-	ALG=$(or $(ALG),mldsa65) ./scripts/tls_demo.sh
+tls-demo: ## Run the private-PQC-PKI TLS demo (ALG=mldsa65; MODE=server|client for two terminals)
+	ALG=$(or $(ALG),mldsa65) ./scripts/tls_demo.sh $(MODE)
 
 measure: ## Measure certificate/key/signature sizes (generates missing PKIs)
 	$(PYTHON) -m lab.cli measure --generate

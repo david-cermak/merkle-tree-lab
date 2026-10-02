@@ -21,10 +21,12 @@ openssl x509 -in out/pki/mldsa65/leaf.crt -noout -text | head -20
 
 1. Fill in the table from `out/measurements.md`:
    cert size, public-key size, signature size for ECDSA, RSA, ML-DSA-44,
-   ML-DSA-65, SLH-DSA.
+   ML-DSA-65, SLH-DSA, and Falcon-512 (skipped if `oqs-provider` is not
+   installed — see facilitator notes).
 2. Where do the extra bytes come from — the public key, the signature, or both?
-3. SLH-DSA has a tiny public key (50 bytes) but a huge signature. Why might that
-   be an advantage for some use cases and a problem for others?
+3. SLH-DSA has a tiny public key (50 bytes) but a huge signature. Falcon has a
+   medium public key and a much smaller signature than ML-DSA. Why might each
+   trade-off be an advantage for some use cases and a problem for others?
 4. If a TLS handshake sends a certificate chain with two PQC signatures, how
    many bytes is that?
 5. With Certificate Transparency, a client typically gets **two SCTs** plus the

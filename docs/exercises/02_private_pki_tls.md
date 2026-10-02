@@ -10,16 +10,30 @@ make pki ALG=mldsa65
 make tls-demo
 ```
 
-Expected output:
+For a hands-on look at the handshake (two terminals, full OpenSSL output):
+
+```bash
+./scripts/tls_demo.sh server    # terminal 1 — leave running
+./scripts/tls_demo.sh client    # terminal 2 — full s_client transcript
+```
+
+Expected output (oneshot / summary lines):
 
 ```
+OpenSSL: .../openssl
+OpenSSL 3.5.x ...
 subject=CN=leaf.example (ML-DSA-65)
 Peer signature type: mldsa65
 Verification: OK
 New, TLSv1.3, Cipher is TLS_AES_256_GCM_SHA384
 Verify return code: 0 (ok)
+OK: client validated the chain; server signed the handshake with the PQ key.
 ```
 
+If you see `Could not read server certificate private key` or a connection
+refused error, you are almost certainly on system OpenSSL 3.0 rather than
+3.5 — check the `OpenSSL:` line the script prints and fix `PATH` /
+`LD_LIBRARY_PATH` (facilitator notes).
 ## Questions
 
 1. Who signs the leaf certificate? Who signs the intermediate?

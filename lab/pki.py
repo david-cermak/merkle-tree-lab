@@ -8,12 +8,15 @@ The point of the exercise is to hold the *shape* of the PKI constant and vary
 only the signature algorithm, so that measured size differences come from the
 cryptography rather than from the certificate layout.
 
-Two OpenSSL details matter:
+OpenSSL details that matter:
 
 * The intermediate must be signed with ``basicConstraints=CA:TRUE`` (see
   ``scripts/openssl/ca_ext.cnf``) or ``openssl verify`` rejects it.
-* Post-quantum key types are requested simply with ``-newkey ML-DSA-65`` and
+* ML-DSA and SLH-DSA key types are requested with ``-newkey ML-DSA-65`` and
   friends; OpenSSL 3.5's default provider understands them.
+* Falcon is not in the default provider. It needs the OQS provider
+  (``-provider oqsprovider -provider default``) and ``OPENSSL_MODULES``
+  pointing at the directory that contains ``oqsprovider.so``.
 """
 
 from __future__ import annotations
@@ -21,13 +24,16 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OPENSSL_CA_EXT = REPO_ROOT / "scripts" / "openssl" / "ca_ext.cnf"
 OPENSSL_LEAF_EXT = REPO_ROOT / "scripts" / "openssl" / "leaf_ext.cnf"
+
+# Falcon lives in oqs-provider; both providers must be named on every command.
+_OQS_PROVIDERS: Tuple[str, ...] = ("oqsprovider", "default")
 
 
 @dataclass(frozen=True)
@@ -36,6 +42,7 @@ class Algorithm:
     label: str
     family: str
     key_args: List[str]
+    providers: Tuple[str, ...] = field(default_factory=tuple)
 
 
 ALGORITHMS: Dict[str, Algorithm] = {
@@ -56,11 +63,22 @@ ALGORITHMS: Dict[str, Algorithm] = {
     "slhdsa-shake-128s": Algorithm(
         "slhdsa-shake-128s", "SLH-DSA-SHAKE-128s", "pqc", ["SLH-DSA-SHAKE-128s"]
     ),
-    "falcon512": Algorithm("falcon512", "Falcon-512", "pqc", ["falcon512"]),
-    "falcon1024": Algorithm("falcon1024", "Falcon-1024", "pqc", ["falcon1024"]),
+    "falcon512": Algorithm(
+        "falcon512", "Falcon-512", "pqc", ["falcon512"], providers=_OQS_PROVIDERS
+    ),
+    "falcon1024": Algorithm(
+        "falcon1024", "Falcon-1024", "pqc", ["falcon1024"], providers=_OQS_PROVIDERS
+    ),
 }
 
-DEFAULT_ALGORITHMS = ["ecdsa-p256", "rsa-2048", "mldsa44", "mldsa65", "slhdsa-sha2-128s"]
+DEFAULT_ALGORITHMS = [
+    "ecdsa-p256",
+    "rsa-2048",
+    "mldsa44",
+    "mldsa65",
+    "slhdsa-sha2-128s",
+    "falcon512",
+]
 
 
 @dataclass
@@ -87,6 +105,14 @@ def openssl_binary() -> str:
     return os.environ.get("OPENSSL", "openssl")
 
 
+def provider_args(algorithm: Algorithm) -> List[str]:
+    """Return ``-provider`` flags for algorithms that need a non-default provider."""
+    args: List[str] = []
+    for name in algorithm.providers:
+        args.extend(["-provider", name])
+    return args
+
+
 def _run(args: List[str], cwd: Path) -> None:
     try:
         subprocess.run(args, cwd=cwd, check=True, capture_output=True)
@@ -94,7 +120,14 @@ def _run(args: List[str], cwd: Path) -> None:
         raise PkiError(f"could not run {args[0]}: {exc}") from exc
     except subprocess.CalledProcessError as exc:
         message = exc.stderr.decode(errors="replace").strip()
-        raise PkiError(f"command failed: {' '.join(args)}\n{message}") from exc
+        hint = ""
+        if "oqsprovider" in args and "OPENSSL_MODULES" not in os.environ:
+            hint = (
+                "\nHint: Falcon needs oqs-provider. Set OPENSSL_MODULES to the "
+                "directory that contains oqsprovider.so, e.g. "
+                "export OPENSSL_MODULES=$HOME/pqc/oqs-provider/_build/lib"
+            )
+        raise PkiError(f"command failed: {' '.join(args)}\n{message}{hint}") from exc
 
 
 def generate(
@@ -111,6 +144,7 @@ def generate(
         raise PkiError(f"unknown algorithm {algorithm!r}; known: {', '.join(sorted(ALGORITHMS))}")
     alg = ALGORITHMS[algorithm]
     openssl = openssl or openssl_binary()
+    providers = provider_args(alg)
     directory = Path(outdir) / algorithm
 
     paths = PkiPaths(
@@ -132,6 +166,7 @@ def generate(
     _run(
         [
             openssl, "req", "-x509", "-newkey", *alg.key_args,
+            *providers,
             "-keyout", "root.key", "-out", "root.crt",
             "-days", str(root_days), "-nodes",
             "-subj", f"/CN={alg.label} Root",
@@ -144,6 +179,7 @@ def generate(
     _run(
         [
             openssl, "req", "-new", "-newkey", *alg.key_args,
+            *providers,
             "-keyout", "int.key", "-out", "int.csr", "-nodes",
             "-subj", f"/CN={alg.label} Intermediate",
         ],
@@ -153,6 +189,7 @@ def generate(
         [
             openssl, "x509", "-req", "-in", "int.csr",
             "-CA", "root.crt", "-CAkey", "root.key", "-CAcreateserial",
+            *providers,
             "-out", "int.crt", "-days", str(int_days),
             "-extfile", str(OPENSSL_CA_EXT), "-extensions", "v3_ca",
         ],
@@ -163,6 +200,7 @@ def generate(
     _run(
         [
             openssl, "req", "-new", "-newkey", *alg.key_args,
+            *providers,
             "-keyout", "leaf.key", "-out", "leaf.csr", "-nodes",
             "-subj", f"/CN=leaf.example ({alg.label})",
         ],
@@ -172,6 +210,7 @@ def generate(
         [
             openssl, "x509", "-req", "-in", "leaf.csr",
             "-CA", "int.crt", "-CAkey", "int.key", "-CAcreateserial",
+            *providers,
             "-out", "leaf.crt", "-days", str(leaf_days),
             "-extfile", str(OPENSSL_LEAF_EXT), "-extensions", "v3_leaf",
         ],
@@ -180,7 +219,10 @@ def generate(
 
     # Sanity check the chain.
     _run(
-        [openssl, "verify", "-CAfile", "root.crt", "-untrusted", "int.crt", "leaf.crt"],
+        [
+            openssl, "verify", *providers,
+            "-CAfile", "root.crt", "-untrusted", "int.crt", "leaf.crt",
+        ],
         directory,
     )
     return paths
@@ -212,6 +254,7 @@ def issue_leaf(
         )
     alg = ALGORITHMS[algorithm]
     openssl = openssl or openssl_binary()
+    providers = provider_args(alg)
     # _run() executes with cwd=directory, so every path handed to OpenSSL has to
     # be absolute or it will be resolved against the wrong directory.
     directory = (Path(outdir) / algorithm).resolve()
@@ -230,6 +273,7 @@ def issue_leaf(
     _run(
         [
             openssl, "req", "-new", "-newkey", *alg.key_args,
+            *providers,
             "-keyout", str(key), "-out", str(csr), "-nodes",
             "-subj", f"/CN={name}.example",
         ],
@@ -239,6 +283,7 @@ def issue_leaf(
         [
             openssl, "x509", "-req", "-in", str(csr),
             "-CA", str(int_crt), "-CAkey", str(int_key), "-CAcreateserial",
+            *providers,
             "-out", str(crt), "-days", str(days),
             "-extfile", str(OPENSSL_LEAF_EXT), "-extensions", "v3_leaf",
         ],
@@ -246,7 +291,7 @@ def issue_leaf(
     )
     _run(
         [
-            openssl, "verify",
+            openssl, "verify", *providers,
             "-CAfile", str(directory / "root.crt"),
             "-untrusted", str(int_crt), str(crt),
         ],

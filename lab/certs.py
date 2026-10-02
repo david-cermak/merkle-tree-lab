@@ -46,6 +46,9 @@ _SIGNATURE_ALGORITHMS = {
     "2.16.840.1.101.3.4.3.29": "SLH-DSA-SHAKE-192f",
     "2.16.840.1.101.3.4.3.30": "SLH-DSA-SHAKE-256s",
     "2.16.840.1.101.3.4.3.31": "SLH-DSA-SHAKE-256f",
+    # oqs-provider provisional OIDs (Falcon / FN-DSA is not yet in the default provider).
+    "1.3.9999.3.11": "Falcon-512",
+    "1.3.9999.3.14": "Falcon-1024",
 }
 
 _PUBLIC_KEY_ALGORITHMS = {
@@ -55,6 +58,8 @@ _PUBLIC_KEY_ALGORITHMS = {
     "2.16.840.1.101.3.4.3.17": "ML-DSA-44",
     "2.16.840.1.101.3.4.3.18": "ML-DSA-65",
     "2.16.840.1.101.3.4.3.19": "ML-DSA-87",
+    "1.3.9999.3.11": "Falcon-512",
+    "1.3.9999.3.14": "Falcon-1024",
 }
 
 

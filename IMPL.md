@@ -17,8 +17,11 @@ The lab has these implemented workstreams:
 | **WS9** | Workshop materials | `docs/facilitator_notes.md`, `docs/exercises/`, `abstract.md` |
 | **WS10** | Verification & CI | `tests/`, `.github/workflows/ci.yml`, `scripts/workshop.sh` |
 
-WS8 (optional Falcon via oqs-provider) is intentionally **not** implemented yet; SLH-DSA and
-Falcon are measurement-only.
+WS8 (Falcon via oqs-provider) is implemented for **measurement only**:
+`falcon512` is in `DEFAULT_ALGORITHMS`, generated with
+`-provider oqsprovider -provider default` when `OPENSSL_MODULES` points at
+`oqsprovider.so`. SLH-DSA and Falcon are still not logged (Go cannot validate
+them).
 
 ---
 

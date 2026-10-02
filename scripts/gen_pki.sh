@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 OUTDIR="${OUTDIR:-out/pki}"
-ALGORITHMS=("${@:-ecdsa-p256 rsa-2048 mldsa44 mldsa65 slhdsa-sha2-128s}")
+ALGORITHMS=("${@:-ecdsa-p256 rsa-2048 mldsa44 mldsa65 slhdsa-sha2-128s falcon512}")
 
 for alg in "${ALGORITHMS[@]}"; do
   echo "==> $alg"

@@ -12,6 +12,9 @@ make submodules
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 export PATH="$HOME/ossl-3.5/bin:$PATH"
 export LD_LIBRARY_PATH="$HOME/ossl-3.5/lib64:$HOME/ossl-3.5/lib:$LD_LIBRARY_PATH"
+# Falcon (optional, via oqs-provider). Skip if you have not built it:
+export OPENSSL_MODULES="${OPENSSL_MODULES:-$HOME/pqc/oqs-provider/_build/lib}"
+openssl version   # expect OpenSSL 3.5.x from $HOME/ossl-3.5, not system 3.0
 make measure      # warms the PKI cache and prints the size table
 make mtc-lab      # builds the MTC scenario; no network needed
 ```
@@ -28,6 +31,16 @@ Confirm `openssl version` shows 3.5+ and `go version` can fetch 1.27
 make build-tesseract
 ```
 
+Falcon measurement needs **oqs-provider** on `OPENSSL_MODULES`. Without it,
+`make measure` skips `falcon512` with a clear hint and still prints the other
+rows. Build sketch (adjust paths to match the room machines):
+
+```bash
+# once: build oqs-provider against the same OpenSSL 3.5 tree
+# then:
+export OPENSSL_MODULES=$HOME/pqc/oqs-provider/_build/lib
+openssl list -providers -provider default -provider oqsprovider
+```
 The MTC half of the workshop (everything from the "one log, four certificates"
 section on) needs **no log server, no Go, no OpenSSL**. If TesseraCT fails to
 build, you can still run the centrepiece.
@@ -38,7 +51,7 @@ build, you can still run the centrepiece.
 |---:|---|---|---|
 | 0–15 | From X.509 to MTC (theory) | — | discussion |
 | 15–35 | Baseline PQC cost | `make measure` | size table (below) |
-| 35–50 | PQC X.509 without MTC | `make pki ALG=mldsa65 && make tls-demo` | `Verification: OK`, `Peer signature type: mldsa65` |
+| 35–50 | PQC X.509 without MTC | `make pki ALG=mldsa65 && make tls-demo` | prints `OpenSSL 3.5.x`, then `Verification: OK`, `Peer signature type: mldsa65` |
 | 50–60 | CT log and what it stores | `make lab-up`, `make demo` | `Inclusion: VALID`, `Checkpoint sig: VALID` |
 | 60–75 | Merkle proofs, step by step | `make fill N=8`, then `make walk INDEX=2` and `INDEX=7` | hash-by-hash, `MATCH: True`, one `inner` and one `border` path |
 | 75–105 | **One log, four certificates** | `make mtc-shapes`, `python3 -m lab.cli mtc verify` | the four-shape table (below) |
@@ -93,13 +106,15 @@ different reason.
 
 ## Talking points
 
-* **Sizes:** ML-DSA ≈ 4–5.6 KB, SLH-DSA ≈ 8 KB per certificate. The CA signature
-  is the dominant cost for SLH-DSA; ML-DSA splits it between key and signature.
+* **Sizes:** ML-DSA ≈ 4–5.6 KB, SLH-DSA ≈ 8 KB, Falcon-512 ≈ 1.9 KB per
+  certificate. Falcon's signature is the small one (~650 B); ML-DSA splits cost
+  between key and signature; SLH-DSA is almost all signature.
 * **The storage argument:** an ML-DSA-65 certificate is ~5 600 B on the wire
   (DER; `ls -l` shows the larger PEM file); the MTC entry is 131 B, because it
   stores a *hash* of the key and no signature. ~43×.
 * **Private PKI:** if you control both ends, ordinary PQC X.509 over TLS works
-  today. You may not need MTC at all.
+  today. You may not need MTC at all. For a two-terminal walkthrough:
+  `./scripts/tls_demo.sh server` and `./scripts/tls_demo.sh client`.
 * **CT is not PQC:** CT is a transparency mechanism; it can log PQC certificates
   but does not make signatures quantum-safe.
 * **Proof vs promise:** the SCT is a promise; the inclusion proof is evidence.
@@ -115,12 +130,14 @@ different reason.
 |---|---|---:|---:|---:|---:|
 | ECDSA P-256 | classical | 478 | 91 | 71 | 901 |
 | RSA-2048 | classical | 868 | 294 | 256 | 1681 |
+| Falcon-512 | PQC | 1881 | 915 | 656 | 3706 |
 | ML-DSA-44 | PQC | 4070 | 1334 | 2420 | 8085 |
 | ML-DSA-65 | PQC | 5599 | 1974 | 3309 | 11143 |
 | SLH-DSA-SHA2-128s | PQC | 8238 | 50 | 7856 | 16421 |
 
-(Regenerate with `make measure`; exact bytes may vary slightly by OpenSSL build.)
-
+(Regenerate with `make measure`; Falcon needs `OPENSSL_MODULES` and may be
+absent if oqs-provider is not installed. Exact Falcon bytes vary slightly by
+encoding.)
 ## Common failures
 
 | Symptom | Cause | Fix |
@@ -133,6 +150,9 @@ different reason.
 | `no scenario at out/mtc/scenario.json` | `mtc shapes` or `mtc verify` before `mtc lab` | run `make mtc-lab` first; the commands share state on disk |
 | `entry 7 is a null entry and cannot be certified` | expected — index 7 is the null entry | pick another index |
 | port already in use | stale process | `make lab-down` |
+| `tls-demo` prints success but handshake never ran | old script filtered `s_client` with `grep \|\| true` | use current `scripts/tls_demo.sh`; it prints `openssl version` and fails if the server dies |
+| `Could not read server certificate private key` | system OpenSSL 3.0 on PATH | `export PATH=$HOME/ossl-3.5/bin:$PATH` and matching `LD_LIBRARY_PATH` |
+| `skip falcon512: ...` during `make measure` | oqs-provider not loaded | set `OPENSSL_MODULES` to the dir with `oqsprovider.so` |
 
 ## What is intentionally out of scope
 
