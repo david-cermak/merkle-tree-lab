@@ -264,3 +264,16 @@ simplified, per the plan's D7:
 * `lab/mtc/` — the implementation, in the order the exercise uses it:
   `log.py` → `cosigners.py` → `landmarks.py` → `certs.py` → `client.py`.
 * `PLAN-update.md` — why the lab is scoped this way.
+
+## Appendices
+
+* [Appendix A — tree structure and proof hashes](appendix_a.md). For the default
+  scenario and index 3, it sketches the tree and shows, shape by shape, which
+  sibling hashes each inclusion proof carries (standalone `[0, 20)` with
+  5 hashes, landmark-relative `[0, 16)` with 4, checkpoint-relative `[0, 8)`
+  with 3).
+* [Appendix B — frequently asked questions](appendix_b.md). High-level Q&A on
+  log growth, retention, revocation, null entries, client state, real-deployment
+  numbers, embedded/stateless clients, and when not to deploy MTC, plus a
+  worked section on how checkpoints and landmarks grow and how consistency
+  proofs connect them.
